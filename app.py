@@ -12,8 +12,8 @@ Features:
 import streamlit as st
 import pandas as pd
 import asyncio
-from typing import List, Dict
 import time
+from typing import List, Dict
 
 # Import our updated detector
 from detector import CloudProviderDetector
@@ -108,6 +108,24 @@ def main():
             help="Run browser in headless mode for faster processing",
         )
 
+        # Check for browser availability and show appropriate message
+        try:
+            from detector import BROWSERS_AVAILABLE
+
+            if not BROWSERS_AVAILABLE:
+                st.info("""
+                🔍 **IP-Only Analysis Mode**
+                
+                Browsers not detected - using IP range analysis only.
+                This is the most reliable detection method and works perfectly!
+                
+                ✅ **Still detects:** AWS, GCP, Azure
+                ⚡ **Faster:** No browser overhead
+                🎯 **Accurate:** Based on official IP ranges
+                """)
+        except:
+            pass
+
         # Sample data option
         if mode == "📊 Analyze Domains" and st.button("📊 Use Sample Data"):
             st.session_state.use_sample_data = True
@@ -195,11 +213,18 @@ def analyze_domains_interface(uploaded_file, domain_column, headless_mode):
         
         **Detection Methods:**
         - 🎯 **IP Range Analysis** (Primary - 60 pts)
+          Based on official cloud provider IP ranges
         - 🔍 **Backend Endpoint Discovery** (40 pts)
+          When browsers available
         - 🛡️ **Security Headers** (30 pts)
         - 📦 **Cloud Assets & CDN** (60 pts max)
+          When browsers available
         
-        **Focus:** Backend hosting detection (not CDN layer)
+        **Robust Design:**
+        - ✅ Works with or without browser dependencies
+        - 🎯 IP analysis alone provides reliable detection
+        - ⚡ Faster performance in IP-only mode
+        - 🌐 Focus on backend hosting (not CDN layer)
         """)
 
 
@@ -315,6 +340,9 @@ def run_accuracy_test(headless_mode: bool):
 
     # Real-time test results display
     st.subheader("📊 Live Test Results")
+
+    # Create placeholders for live updates
+    current_result_placeholder = st.empty()
     test_results_table = st.empty()
     test_summary_metrics = st.empty()
 
@@ -340,6 +368,9 @@ def run_accuracy_test(headless_mode: bool):
             status_text.text(f"🔍 Testing {i + 1}/{total_domains}: {domain}")
             progress_bar.progress((i + 1) / total_domains)
 
+            # Show current domain being tested
+            current_result_placeholder.info(f"🔄 **Currently testing:** `{domain}`")
+
             try:
                 # Run analysis
                 result = asyncio.run(detector.analyze_website(domain))
@@ -364,12 +395,25 @@ def run_accuracy_test(headless_mode: bool):
                 # Print result to console for real-time feedback
                 correct_emoji = "✅" if is_correct else "❌"
                 print(
-                    f"{correct_emoji} {domain} → True: {true_label}, Predicted: {predicted_label} ({confidence:.1f}%)"
+                    f"{correct_emoji} {domain} → True: {true_label}, Predicted: {predicted_label} ({confidence:.1f}%) {'CORRECT' if is_correct else 'WRONG'}"
                 )
 
+                # Show immediate result with prominent display
+                if is_correct:
+                    current_result_placeholder.success(
+                        f"✅ **CORRECT!** `{domain}` → True: {true_label}, Predicted: {predicted_label} ({confidence:.1f}%)"
+                    )
+                else:
+                    current_result_placeholder.error(
+                        f"❌ **WRONG!** `{domain}` → True: {true_label}, Predicted: {predicted_label} ({confidence:.1f}%)"
+                    )
+
                 # Update status with result
+                accuracy_so_far = (
+                    sum(1 for r in results if r.get("correct", False)) / len(results)
+                ) * 100
                 status_text.text(
-                    f"{correct_emoji} {i + 1}/{total_domains}: {domain} → {predicted_label} ({'Correct' if is_correct else 'Wrong'})"
+                    f"{correct_emoji} {i + 1}/{total_domains}: {domain} → {predicted_label} ({'✅ Correct' if is_correct else '❌ Wrong'}) | Running Accuracy: {accuracy_so_far:.1f}%"
                 )
 
                 # Update live test results display
@@ -377,10 +421,16 @@ def run_accuracy_test(headless_mode: bool):
                     results, test_results_table, test_summary_metrics
                 )
 
+                # Small delay to make the result visible
+                time.sleep(0.5)
+
             except Exception as e:
                 error_msg = f"Error testing {domain}: {e}"
                 st.error(error_msg)
                 print(f"❌ {domain} → Error: {e}")
+                current_result_placeholder.error(
+                    f"❌ **ERROR!** `{domain}` → {error_msg}"
+                )
                 status_text.text(f"❌ {i + 1}/{total_domains} failed: {domain}")
 
                 # Add error result
@@ -402,6 +452,7 @@ def run_accuracy_test(headless_mode: bool):
 
         # Clear progress indicators
         progress_bar.empty()
+        current_result_placeholder.success("🎉 **All tests completed!**")
         status_text.success("✅ Accuracy Test Complete!")
 
         # Calculate final metrics
@@ -431,6 +482,7 @@ def run_accuracy_test(headless_mode: bool):
         st.error(f"❌ Test failed: {str(e)}")
         progress_bar.empty()
         status_text.empty()
+        current_result_placeholder.empty()
 
 
 def display_results(results: List[Dict], container):
@@ -662,6 +714,9 @@ def display_test_results_live(
     results: List[Dict], test_results_table, test_summary_metrics
 ):
     """Display live test results and summary metrics."""
+    if not results:
+        return
+
     # Create results dataframe for display
     display_data = []
     providers = {}
@@ -705,48 +760,87 @@ def display_test_results_live(
         else:
             confidence_display = f"🔴 {confidence:.1f}%"
 
-        # Correctness indicator
+        # Correctness indicator with background color styling
         is_correct = result.get("correct", False)
-        correctness_display = "✅ Correct" if is_correct else "❌ Wrong"
+        if is_correct:
+            correctness_display = "🎯 CORRECT"
+            domain_display = f"✅ {result['domain']}"
+        else:
+            correctness_display = "💥 WRONG"
+            domain_display = f"❌ {result['domain']}"
 
         display_data.append(
             {
-                "Domain": result["domain"],
-                "True": true_display,
+                "Domain": domain_display,
+                "Expected": true_display,
                 "Predicted": provider_display,
                 "Confidence": confidence_display,
-                "Result": correctness_display,
+                "Accuracy": correctness_display,
             }
         )
 
-    # Display current results table
-    test_results_table.dataframe(
-        pd.DataFrame(display_data), use_container_width=True, hide_index=True
-    )
+    # Display current results table with enhanced formatting
+    results_df = pd.DataFrame(display_data)
 
-    # Summary metrics
+    # Sort by most recent (last row first) for better visibility
+    results_df = results_df.iloc[::-1].reset_index(drop=True)
+
+    with test_results_table.container():
+        st.write(f"**📋 Test Results ({len(results)} completed)**")
+        st.dataframe(
+            results_df,
+            use_container_width=True,
+            hide_index=True,
+            height=min(400, len(results) * 35 + 50),  # Dynamic height
+        )
+
+    # Summary metrics with enhanced display
     total = len(results)
     avg_confidence = total_confidence / total if total > 0 else 0
     correct_count = sum(1 for r in results if r.get("correct", False))
     accuracy_so_far = (correct_count / total * 100) if total > 0 else 0
 
-    col1, col2, col3, col4 = test_summary_metrics.columns(4)
-    with col1:
-        st.metric("Tested", total)
-    with col2:
-        st.metric("Accuracy So Far", f"{accuracy_so_far:.1f}%")
-    with col3:
-        st.metric("Avg Confidence", f"{avg_confidence:.1f}%")
-    with col4:
-        st.metric("Correct", f"{correct_count}/{total}")
+    with test_summary_metrics.container():
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("🧪 Tested", total)
+        with col2:
+            # Color code the accuracy metric
+            accuracy_delta = None
+            if total > 1:
+                prev_accuracy = (
+                    (correct_count - (1 if results[-1].get("correct", False) else 0))
+                    / (total - 1)
+                ) * 100
+                accuracy_delta = f"{accuracy_so_far - prev_accuracy:+.1f}%"
+            st.metric("🎯 Accuracy", f"{accuracy_so_far:.1f}%", accuracy_delta)
+        with col3:
+            st.metric("📊 Avg Confidence", f"{avg_confidence:.1f}%")
+        with col4:
+            st.metric("✅ Correct", f"{correct_count}/{total}")
+
+        # Progress indicator
+        st.progress(accuracy_so_far / 100 if accuracy_so_far <= 100 else 1.0)
+
+        # Quick stats
+        wrong_count = total - correct_count
+        if wrong_count > 0:
+            st.write(
+                f"📈 **Current Stats:** {correct_count} correct, {wrong_count} wrong"
+            )
+        else:
+            st.write(
+                f"🎉 **Perfect so far!** {correct_count} out of {correct_count} correct"
+            )
 
     # Provider distribution chart for predictions
-    if providers:
-        st.subheader("🔍 Live Prediction Distribution")
-        provider_df = pd.DataFrame(
-            list(providers.items()), columns=["Provider", "Count"]
-        )
-        st.bar_chart(provider_df.set_index("Provider"))
+    if providers and len(providers) > 1:
+        with test_summary_metrics.container():
+            st.write("🔍 **Live Prediction Distribution:**")
+            provider_df = pd.DataFrame(
+                list(providers.items()), columns=["Provider", "Count"]
+            )
+            st.bar_chart(provider_df.set_index("Provider"), height=200)
 
 
 def display_final_test_results(

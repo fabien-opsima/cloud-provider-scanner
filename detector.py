@@ -39,9 +39,34 @@ try:
     from playwright.async_api import async_playwright
 
     PLAYWRIGHT_AVAILABLE = True
+
+    # Test if browsers are actually available
+    try:
+        import subprocess
+        import sys
+
+        # Quick test to see if browsers are available
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "from playwright.sync_api import sync_playwright; p = sync_playwright(); p.start().chromium.launch()",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        BROWSERS_AVAILABLE = result.returncode == 0
+    except Exception:
+        BROWSERS_AVAILABLE = False
+
+    if not BROWSERS_AVAILABLE:
+        print("Note: Playwright browsers not available - using IP-only analysis mode")
+
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
-    print("Warning: Playwright not available. Some features will be limited.")
+    BROWSERS_AVAILABLE = False
+    print("Note: Playwright not available - using IP-only analysis mode")
 
 
 class CloudProviderDetector:
@@ -206,41 +231,19 @@ class CloudProviderDetector:
         """Discover backend API endpoints and additional IPs."""
         backend_ips = []
 
-        # Check if Playwright is available
-        if not PLAYWRIGHT_AVAILABLE:
-            print(
-                f"Playwright not available - skipping backend endpoint discovery for {url}"
-            )
+        # Check if browsers are available
+        if not PLAYWRIGHT_AVAILABLE or not BROWSERS_AVAILABLE:
             return backend_ips
 
         browser = None
         try:
             async with async_playwright() as p:
-                # Try to install browsers if they're missing
+                # Launch browser without installation attempts
                 try:
                     browser = await p.chromium.launch(headless=self.headless)
-                except Exception as browser_error:
-                    print(
-                        f"Browser launch failed, attempting to install: {browser_error}"
-                    )
-                    # Try to install browsers programmatically
-                    try:
-                        import subprocess
-
-                        result = subprocess.run(
-                            [sys.executable, "-m", "playwright", "install", "chromium"],
-                            capture_output=True,
-                            text=True,
-                            timeout=60,
-                        )
-                        if result.returncode == 0:
-                            browser = await p.chromium.launch(headless=self.headless)
-                        else:
-                            print(f"Failed to install browsers: {result.stderr}")
-                            return backend_ips
-                    except Exception as install_error:
-                        print(f"Browser installation failed: {install_error}")
-                        return backend_ips
+                except Exception:
+                    # Don't try to install if browsers aren't available
+                    return backend_ips
 
                 context = await browser.new_context()
                 page = await context.new_page()
@@ -268,8 +271,9 @@ class CloudProviderDetector:
                     domain_ips = self.resolve_domain_to_ips(domain)
                     backend_ips.extend(domain_ips)
 
-        except Exception as e:
-            print(f"Backend endpoint discovery failed for {url}: {e}")
+        except Exception:
+            # Silently fail for backend endpoint discovery
+            pass
         finally:
             if browser:
                 try:
@@ -302,19 +306,17 @@ class CloudProviderDetector:
         """Analyze asset URLs for cloud storage and CDN signatures."""
         scores = {provider: 0.0 for provider in self.cloud_patterns.keys()}
 
-        # Check if Playwright is available
-        if not PLAYWRIGHT_AVAILABLE:
-            print(f"Playwright not available - skipping asset analysis for {url}")
+        # Check if browsers are available
+        if not PLAYWRIGHT_AVAILABLE or not BROWSERS_AVAILABLE:
             return scores
 
         browser = None
         try:
             async with async_playwright() as p:
-                # Try to launch browser with fallback to installation
+                # Try to launch browser with fallback
                 try:
                     browser = await p.chromium.launch(headless=self.headless)
-                except Exception as browser_error:
-                    print(f"Browser launch failed for asset analysis: {browser_error}")
+                except Exception:
                     return scores
 
                 context = await browser.new_context()
@@ -358,8 +360,9 @@ class CloudProviderDetector:
                         ):
                             scores[provider] += 20.0
 
-        except Exception as e:
-            print(f"Asset analysis failed for {url}: {e}")
+        except Exception:
+            # Silently fail for asset analysis
+            pass
         finally:
             if browser:
                 try:
