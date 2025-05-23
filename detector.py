@@ -766,9 +766,8 @@ class CloudProviderDetector:
                 strongest["evidence"],
             )
         elif strongest["method"] == "Direct Cloud XHR Call":
-            return f"Direct XHR calls to {primary_provider} cloud services", strongest[
-                "evidence"
-            ]
+            # Return the specific evidence text which includes the service type
+            return strongest["evidence"], strongest["evidence"]
         elif strongest["method"] == "XHR API Headers":
             return (
                 f"XHR API endpoints show {primary_provider}-specific headers",
