@@ -1,0 +1,37 @@
+[project]
+name = "cloud-provider-scanner"
+version = "0.1.0"
+description = "A tool to detect cloud providers used by websites"
+authors = [{name = "Cloud Scanner", email = "scanner@example.com"}]
+requires-python = ">=3.9"
+dependencies = [
+    "playwright>=1.40.0",
+    "requests>=2.31.0",
+    "beautifulsoup4>=4.12.2",
+    "dnspython>=2.4.2",
+    "pandas>=2.1.0",
+    "tqdm>=4.66.0",
+    "urllib3>=2.1.0",
+    "lxml>=4.9.3",
+    "ipaddress>=1.0.23",
+    "aiohttp>=3.9.0",
+    "asyncio-throttle>=1.0.2",
+    "python-whois>=0.8.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+
+[project.scripts]
+cloud-scanner = "cloud_provider_detector:main" 
