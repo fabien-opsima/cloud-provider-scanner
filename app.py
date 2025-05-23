@@ -228,6 +228,7 @@ def analyze_domains_interface(uploaded_file, domain_column, headless_mode):
           IP analysis of XHR/fetch requests from app subdomains
         - ☁️ **Direct Cloud XHR Calls** (60 pts)
           XHR requests directly to *.amazonaws.com, *.googleapis.com etc.
+          (Excludes Google Maps API - not backend hosting)
         - 🛡️ **XHR API Headers** (40 pts)
           Headers from actual API endpoints making XHR calls
         
@@ -236,6 +237,12 @@ def analyze_domains_interface(uploaded_file, domain_column, headless_mode):
         - 📱 Navigates to Single Page Applications (SPAs)
         - 🔄 Interacts with pages to trigger API calls
         - 🎪 Focuses on actual backend infrastructure, not website hosting
+        
+        **Enhanced Reporting:**
+        - 📍 Shows exact endpoint URLs and IP addresses
+        - 📊 Displays specific IP ranges matched
+        - 🏷️ Provides detailed network information
+        - 🔍 Transparent evidence for each detection
         
         **Why XHR-Only?**
         - ✅ Ignores website hosting platforms completely
@@ -715,6 +722,23 @@ def display_final_results(
                         st.write(
                             f"• **{evidence['method']}**: {evidence['evidence']} (+{evidence['confidence_points']} pts)"
                         )
+
+                        # Show detailed information if available
+                        if evidence.get("details"):
+                            details = evidence["details"]
+                            if details.get("endpoint_url"):
+                                st.write(
+                                    f"  📍 **Endpoint:** {details['endpoint_url']}"
+                                )
+                            if details.get("ip_address"):
+                                st.write(
+                                    f"  🌐 **IP Address:** {details['ip_address']}"
+                                )
+                            if details.get("ip_range"):
+                                st.write(f"  📊 **IP Range:** {details['ip_range']}")
+                            if details.get("network_name"):
+                                st.write(f"  🏷️ **Network:** {details['network_name']}")
+                            st.write("")  # Add spacing
 
                 # Show all provider scores
                 if result.get("details", {}).get("provider_scores"):

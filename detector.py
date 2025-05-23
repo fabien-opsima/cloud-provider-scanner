@@ -260,8 +260,8 @@ class CloudProviderDetector:
             print(f"Failed to resolve {domain}: {e}")
         return ips
 
-    def check_ip_against_cloud_ranges(self, ip: str) -> Optional[str]:
-        """Check if IP belongs to a cloud provider's range with robust matching."""
+    def check_ip_against_cloud_ranges(self, ip: str) -> Optional[Dict[str, str]]:
+        """Check if IP belongs to a cloud provider's range with detailed range information."""
         try:
             ip_obj = ipaddress.ip_address(ip)
             for provider, ranges in self.ip_ranges.items():
@@ -270,7 +270,12 @@ class CloudProviderDetector:
                         if "/" in ip_range:
                             network = ipaddress.ip_network(ip_range, strict=False)
                             if ip_obj in network:
-                                return provider
+                                return {
+                                    "provider": provider,
+                                    "ip": ip,
+                                    "range": ip_range,
+                                    "network_name": f"{provider} IP range {ip_range}",
+                                }
                     except Exception:
                         continue
         except Exception:
@@ -338,7 +343,7 @@ class CloudProviderDetector:
                                 ):
                                     cloud_calls.add((request_domain, "AWS"))
                                     print(f"  ☁️ XHR to AWS: {request_domain}")
-                                # Check for GCP domains
+                                # Check for GCP domains (excluding Maps API)
                                 elif any(
                                     pattern in request_domain.lower()
                                     for pattern in [
@@ -347,8 +352,21 @@ class CloudProviderDetector:
                                         ".run.app",
                                     ]
                                 ):
-                                    cloud_calls.add((request_domain, "GCP"))
-                                    print(f"  ☁️ XHR to GCP: {request_domain}")
+                                    # Exclude Google Maps API calls as they're third-party services, not backend hosting
+                                    if not any(
+                                        maps_pattern in request_domain.lower()
+                                        for maps_pattern in [
+                                            "maps.googleapis.com",
+                                            "mapsplatform.googleapis.com",
+                                            "maps.gstatic.com",
+                                        ]
+                                    ):
+                                        cloud_calls.add((request_domain, "GCP"))
+                                        print(f"  ☁️ XHR to GCP: {request_domain}")
+                                    else:
+                                        print(
+                                            f"  🗺️ Skipping Google Maps API: {request_domain}"
+                                        )
                                 # Check for Azure domains
                                 elif any(
                                     pattern in request_domain.lower()
@@ -558,11 +576,13 @@ class CloudProviderDetector:
                     f"  🎯 Analyzing {len(backend_data['api_ips'])} API endpoint IPs..."
                 )
                 for ip in backend_data["api_ips"]:
-                    provider = self.check_ip_against_cloud_ranges(ip)
-                    if provider:
+                    ip_info = self.check_ip_against_cloud_ranges(ip)
+                    if ip_info:
+                        provider = ip_info["provider"]
                         provider_scores[provider] += 80.0
                         backend_provider = provider
                         backend_match = ip
+
                         # Find which API domain this IP belongs to
                         api_domain = "unknown API endpoint"
                         for api_domain_candidate in backend_data["xhr_api_calls"]:
@@ -570,15 +590,24 @@ class CloudProviderDetector:
                             if ip in api_ips:
                                 api_domain = api_domain_candidate
                                 break
+
                         evidence_list.append(
                             {
                                 "method": "XHR API Endpoint",
                                 "provider": provider,
-                                "evidence": f"XHR API {api_domain} (IP {ip}) matches {provider} ranges",
+                                "evidence": f"XHR API {api_domain} (IP {ip}) matches {provider} range {ip_info['range']}",
                                 "confidence_points": 80,
+                                "details": {
+                                    "endpoint_url": api_domain,
+                                    "ip_address": ip,
+                                    "ip_range": ip_info["range"],
+                                    "network_name": ip_info["network_name"],
+                                },
                             }
                         )
-                        print(f"  ✅ Strong match: {api_domain} → {provider}")
+                        print(
+                            f"  ✅ Strong match: {api_domain} → {provider} (IP {ip} in range {ip_info['range']})"
+                        )
                         break  # Only count one match for API endpoints
 
             # 1b. Direct cloud provider domain calls from XHR (60 points)
@@ -682,7 +711,7 @@ class CloudProviderDetector:
     def _determine_primary_reason_xhr(
         self, evidence_list, primary_provider, backend_match, backend_data
     ):
-        """Determine the primary reason for detection based on XHR evidence."""
+        """Determine the primary reason for detection based on XHR evidence with detailed endpoint info."""
         provider_evidence = [
             e for e in evidence_list if e["provider"] == primary_provider
         ]
@@ -695,8 +724,12 @@ class CloudProviderDetector:
         strongest = provider_evidence[0]
 
         if strongest["method"] == "XHR API Endpoint":
+            details = strongest.get("details", {})
+            endpoint = details.get("endpoint_url", "unknown endpoint")
+            ip_addr = details.get("ip_address", "unknown IP")
+            ip_range = details.get("ip_range", "unknown range")
             return (
-                f"XHR API endpoints hosted on {primary_provider} infrastructure",
+                f"XHR API endpoint {endpoint} (IP {ip_addr}) in {primary_provider} range {ip_range}",
                 strongest["evidence"],
             )
         elif strongest["method"] == "Direct Cloud XHR Call":
