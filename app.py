@@ -253,18 +253,31 @@ def process_domains(df: pd.DataFrame, domain_column: str, headless_mode: bool):
         async def run_analysis():
             results = []
             for i, url in enumerate(urls):
-                status_text.text(f"Analyzing {i + 1}/{len(urls)}: {url}")
+                status_text.text(f"🔍 Analyzing {i + 1}/{len(urls)}: {url}")
                 progress_bar.progress((i + 1) / len(urls))
 
                 try:
                     result = await detector.analyze_website(url)
                     results.append(result)
 
+                    # Print result to console for real-time feedback
+                    provider = result["primary_cloud_provider"]
+                    confidence = result["confidence_score"]
+                    print(f"✅ {url} → {provider} ({confidence:.1f}%)")
+
+                    # Update status with result
+                    status_text.text(
+                        f"✅ {i + 1}/{len(urls)} complete: {url} → {provider} ({confidence:.1f}%)"
+                    )
+
                     # Update results display in real-time
                     display_results(results, results_container)
 
                 except Exception as e:
-                    st.error(f"Error analyzing {url}: {e}")
+                    error_msg = f"Error analyzing {url}: {e}"
+                    st.error(error_msg)
+                    print(f"❌ {url} → Error: {e}")
+                    status_text.text(f"❌ {i + 1}/{len(urls)} failed: {url}")
                     results.append(
                         {
                             "url": url,
@@ -273,6 +286,8 @@ def process_domains(df: pd.DataFrame, domain_column: str, headless_mode: bool):
                             "details": {"error": str(e)},
                         }
                     )
+                    # Update display even with errors
+                    display_results(results, results_container)
 
             return results
 
@@ -376,35 +391,73 @@ def display_results(results: List[Dict], container):
         return
 
     with container.container():
-        # Summary metrics
-        total = len(results)
+        # Create results dataframe for display
+        display_data = []
         providers = {}
-        avg_confidence = 0
+        total_confidence = 0
 
         for result in results:
             provider = result.get("primary_cloud_provider", "Unknown")
+            confidence = result.get("confidence_score", 0)
+
             providers[provider] = providers.get(provider, 0) + 1
-            avg_confidence += result.get("confidence_score", 0)
+            total_confidence += confidence
 
-        avg_confidence = avg_confidence / total if total > 0 else 0
+            # Add emoji indicators
+            if provider == "AWS":
+                provider_display = "🟧 AWS"
+            elif provider == "GCP":
+                provider_display = "🔵 GCP"
+            elif provider == "Azure":
+                provider_display = "🔷 Azure"
+            elif provider == "Error":
+                provider_display = "❌ Error"
+            else:
+                provider_display = "⚫ Other"
 
-        # Display summary
+            # Confidence indicator
+            if confidence >= 70:
+                confidence_display = f"🟢 {confidence:.1f}%"
+            elif confidence >= 40:
+                confidence_display = f"🟡 {confidence:.1f}%"
+            else:
+                confidence_display = f"🔴 {confidence:.1f}%"
+
+            display_data.append(
+                {
+                    "Domain": result["url"],
+                    "Provider": provider_display,
+                    "Confidence": confidence_display,
+                    "Status": "✅ Success" if provider != "Error" else "❌ Failed",
+                }
+            )
+
+        # Display current results table
+        st.subheader(f"📊 Results ({len(results)} analyzed)")
+        st.dataframe(
+            pd.DataFrame(display_data), use_container_width=True, hide_index=True
+        )
+
+        # Summary metrics
+        total = len(results)
+        avg_confidence = total_confidence / total if total > 0 else 0
+
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.metric("Total Analyzed", total)
+            st.metric("Analyzed", total)
         with col2:
             st.metric("Avg Confidence", f"{avg_confidence:.1f}%")
         with col3:
-            most_common = (
-                max(providers.items(), key=lambda x: x[1]) if providers else ("None", 0)
+            high_confidence = sum(
+                1 for r in results if r.get("confidence_score", 0) >= 70
             )
-            st.metric("Most Common", most_common[0])
+            st.metric("High Confidence", f"{high_confidence}")
         with col4:
             st.metric("Providers Found", len(providers))
 
         # Provider distribution
         if providers:
-            st.subheader("Provider Distribution")
+            st.subheader("🔍 Live Provider Distribution")
             provider_df = pd.DataFrame(
                 list(providers.items()), columns=["Provider", "Count"]
             )
@@ -414,75 +467,147 @@ def display_results(results: List[Dict], container):
 def display_final_results(
     results: List[Dict], original_df: pd.DataFrame, domain_column: str
 ):
-    """Display final comprehensive results."""
-    st.subheader("📊 Analysis Complete!")
+    """Display final comprehensive results with download options."""
+    st.subheader("🎉 Analysis Complete!")
 
-    # Create results DataFrame
-    results_data = []
+    # Create comprehensive results DataFrame
+    final_data = []
     for result in results:
-        results_data.append(
+        final_data.append(
             {
                 "Domain": result["url"],
                 "Cloud Provider": result["primary_cloud_provider"],
-                "Confidence": f"{result['confidence_score']:.1f}%",
+                "Confidence Score": f"{result['confidence_score']:.1f}%",
                 "Main IPs": ", ".join(
                     result.get("details", {}).get("main_domain_ips", [])
                 ),
                 "Backend IPs": ", ".join(
                     result.get("details", {}).get("backend_ips", [])
                 ),
+                "Provider Scores": str(
+                    result.get("details", {}).get("provider_scores", {})
+                ),
+                "Error": result.get("details", {}).get("error", ""),
             }
         )
 
-    results_df = pd.DataFrame(results_data)
+    results_df = pd.DataFrame(final_data)
 
-    # Display summary metrics
+    # Summary statistics
     total = len(results)
     providers = {}
     high_confidence = 0
+    errors = 0
 
     for result in results:
         provider = result["primary_cloud_provider"]
         providers[provider] = providers.get(provider, 0) + 1
         if result["confidence_score"] >= 70:
             high_confidence += 1
+        if provider == "Error":
+            errors += 1
 
+    # Display summary metrics
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("Total Analyzed", total)
+        st.metric("Total Domains", total)
     with col2:
-        st.metric(
-            "High Confidence",
-            f"{high_confidence} ({high_confidence / total * 100:.1f}%)",
-        )
+        success_rate = ((total - errors) / total * 100) if total > 0 else 0
+        st.metric("Success Rate", f"{success_rate:.1f}%")
     with col3:
-        most_common = (
-            max(providers.items(), key=lambda x: x[1]) if providers else ("None", 0)
-        )
-        st.metric("Most Common Provider", most_common[0])
+        confidence_rate = (high_confidence / total * 100) if total > 0 else 0
+        st.metric("High Confidence", f"{confidence_rate:.1f}%")
     with col4:
-        st.metric("Unique Providers", len(providers))
+        st.metric(
+            "Unique Providers", len([p for p in providers.keys() if p != "Error"])
+        )
 
     # Provider distribution chart
     if providers:
-        st.subheader("Provider Distribution")
+        st.subheader("☁️ Final Provider Distribution")
         provider_df = pd.DataFrame(
             list(providers.items()), columns=["Provider", "Count"]
         )
         st.bar_chart(provider_df.set_index("Provider"))
 
     # Detailed results table
-    st.subheader("Detailed Results")
-    st.dataframe(results_df, use_container_width=True)
+    st.subheader("📋 Complete Results")
+    st.dataframe(results_df, use_container_width=True, hide_index=True)
 
-    # Download button
-    csv = results_df.to_csv(index=False)
-    st.download_button(
-        label="📥 Download Results as CSV",
-        data=csv,
-        file_name=f"cloud_provider_analysis_{time.strftime('%Y%m%d_%H%M%S')}.csv",
-        mime="text/csv",
-    )
+    # Download section
+    st.subheader("💾 Download Results")
+
+    # Create downloadable CSVs
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+
+    # Detailed CSV
+    detailed_csv = results_df.to_csv(index=False)
+    detailed_filename = f"cloud_provider_detailed_{timestamp}.csv"
+
+    # Summary CSV (simplified)
+    summary_data = []
+    for result in results:
+        summary_data.append(
+            {
+                "Domain": result["url"],
+                "Cloud Provider": result["primary_cloud_provider"],
+                "Confidence": f"{result['confidence_score']:.1f}%",
+                "Main IP": result.get("details", {}).get("main_domain_ips", [""])[0]
+                if result.get("details", {}).get("main_domain_ips")
+                else "",
+            }
+        )
+
+    summary_df = pd.DataFrame(summary_data)
+    summary_csv = summary_df.to_csv(index=False)
+    summary_filename = f"cloud_provider_summary_{timestamp}.csv"
+
+    # Download buttons
+    col1, col2 = st.columns(2)
+    with col1:
+        st.download_button(
+            label="📥 Download Detailed Results",
+            data=detailed_csv,
+            file_name=detailed_filename,
+            mime="text/csv",
+            help="Complete analysis data with IPs, scores, and errors",
+            type="primary",
+        )
+
+    with col2:
+        st.download_button(
+            label="📄 Download Summary",
+            data=summary_csv,
+            file_name=summary_filename,
+            mime="text/csv",
+            help="Simplified domain → provider mapping",
+        )
+
+    # Analysis summary info
+    st.info(f"""
+    📊 **Analysis Complete!**
+    
+    ✅ **{total} domains analyzed**
+    🎯 **{success_rate:.1f}% success rate**
+    📈 **{high_confidence} high-confidence detections** (≥70%)
+    ⚡ **{len([p for p in providers.keys() if p != "Error"])} unique providers found**
+    
+    💡 Use the download buttons above to save your results!
+    """)
+
+    # Print summary to console/logs
+    print("\n🎉 ANALYSIS COMPLETE!")
+    print(f"📊 Total domains analyzed: {total}")
+    print(f"✅ Success rate: {success_rate:.1f}%")
+    print(f"🎯 High confidence detections: {high_confidence}")
+    print("☁️ Provider breakdown:")
+    for provider, count in providers.items():
+        if provider != "Error":
+            percentage = (count / total) * 100
+            print(f"   {provider}: {count} domains ({percentage:.1f}%)")
+    print(f"📁 Results available for download: {detailed_filename}")
+
+    return results_df
 
 
 def display_test_results(
