@@ -982,99 +982,24 @@ def display_final_results(
 def display_test_results_live(
     results: List[Dict], test_results_table, test_summary_metrics
 ):
-    """Display live test results and summary metrics."""
+    """Display live test results using cards instead of tables to prevent truncation."""
     if not results:
         return
 
-    # Create results dataframe for display
-    display_data = []
+    # Summary metrics with enhanced display
+    total = len(results)
+    correct_count = sum(1 for r in results if r.get("correct", False))
+    accuracy_so_far = (correct_count / total * 100) if total > 0 else 0
     providers = {}
     total_confidence = 0
 
     for result in results:
         provider = result.get("predicted_label", "Unknown")
         confidence = result.get("confidence", 0)
-        primary_reason = result.get("primary_reason", "No reason provided")
-
         providers[provider] = providers.get(provider, 0) + 1
         total_confidence += confidence
 
-        # Add emoji indicators for predicted provider
-        if provider == "AWS":
-            provider_display = "🟧 AWS"
-        elif provider == "GCP":
-            provider_display = "🔵 GCP"
-        elif provider == "Azure":
-            provider_display = "🔷 Azure"
-        elif provider == "Error":
-            provider_display = "❌ Error"
-        else:
-            provider_display = "⚫ Other"
-
-        # True label display
-        true_label = result.get("true_label", "Unknown")
-        if true_label == "AWS":
-            true_display = "🟧 AWS"
-        elif true_label == "GCP":
-            true_display = "🔵 GCP"
-        elif true_label == "Azure":
-            true_display = "🔷 Azure"
-        else:
-            true_display = "⚫ Other"
-
-        # Confidence indicator
-        if confidence >= 70:
-            confidence_display = f"🟢 {confidence:.1f}%"
-        elif confidence >= 40:
-            confidence_display = f"🟡 {confidence:.1f}%"
-        else:
-            confidence_display = f"🔴 {confidence:.1f}%"
-
-        # Correctness indicator with background color styling
-        is_correct = result.get("correct", False)
-        if is_correct:
-            correctness_display = "🎯 CORRECT"
-            domain_display = f"✅ {result['domain']}"
-        else:
-            correctness_display = "💥 WRONG"
-            domain_display = f"❌ {result['domain']}"
-
-        # Truncate reason for table display
-        reason_display = primary_reason
-        if len(reason_display) > 45:
-            reason_display = reason_display[:42] + "..."
-
-        display_data.append(
-            {
-                "Domain": domain_display,
-                "Expected": true_display,
-                "Predicted": provider_display,
-                "Confidence": confidence_display,
-                "Primary Reason": reason_display,
-                "Accuracy": correctness_display,
-            }
-        )
-
-    # Display current results table with enhanced formatting
-    results_df = pd.DataFrame(display_data)
-
-    # Sort by most recent (last row first) for better visibility
-    results_df = results_df.iloc[::-1].reset_index(drop=True)
-
-    with test_results_table.container():
-        st.write(f"**📋 Test Results ({len(results)} completed)**")
-        st.dataframe(
-            results_df,
-            use_container_width=True,
-            hide_index=True,
-            height=min(400, len(results) * 35 + 50),  # Dynamic height
-        )
-
-    # Summary metrics with enhanced display
-    total = len(results)
     avg_confidence = total_confidence / total if total > 0 else 0
-    correct_count = sum(1 for r in results if r.get("correct", False))
-    accuracy_so_far = (correct_count / total * 100) if total > 0 else 0
 
     with test_summary_metrics.container():
         col1, col2, col3, col4 = st.columns(4)
@@ -1097,6 +1022,69 @@ def display_test_results_live(
 
         # Progress indicator
         st.progress(accuracy_so_far / 100 if accuracy_so_far <= 100 else 1.0)
+
+    # Display test results using cards instead of table
+    with test_results_table.container():
+        st.write(f"**📋 Live Test Results ({len(results)} completed)**")
+
+        # Show most recent results first (reverse order)
+        for i, result in enumerate(reversed(results[-5:])):  # Show last 5 results
+            is_correct = result.get("correct", False)
+            domain = result["domain"]
+            true_label = result["true_label"]
+            predicted_label = result["predicted_label"]
+            confidence = result.get("confidence", 0)
+            primary_reason = result.get("primary_reason", "No reason provided")
+
+            # Color coding based on correctness
+            if is_correct:
+                card_color = "#d4f6d4"  # Light green
+                status_emoji = "✅"
+                status_text = "CORRECT"
+            else:
+                card_color = "#f6d4d4"  # Light red
+                status_emoji = "❌"
+                status_text = "WRONG"
+
+            # Provider emojis
+            def get_provider_emoji(provider):
+                if provider == "AWS":
+                    return "🟧"
+                elif provider == "GCP":
+                    return "🔵"
+                elif provider == "Azure":
+                    return "🔷"
+                else:
+                    return "⚫"
+
+            true_emoji = get_provider_emoji(true_label)
+            pred_emoji = get_provider_emoji(predicted_label)
+
+            # Create test result card
+            st.markdown(
+                f"""
+            <div style="
+                background-color: {card_color};
+                padding: 15px;
+                border-radius: 8px;
+                border-left: 4px solid {"#28a745" if is_correct else "#dc3545"};
+                margin: 8px 0;
+                font-size: 14px;
+            ">
+                <div style="font-weight: bold; margin-bottom: 8px;">
+                    {status_emoji} <strong>{domain}</strong> - {status_text}
+                </div>
+                <div style="margin-bottom: 5px;">
+                    <strong>Expected:</strong> {true_emoji} {true_label} | 
+                    <strong>Predicted:</strong> {pred_emoji} {predicted_label} ({confidence:.1f}%)
+                </div>
+                <div style="background-color: white; padding: 10px; border-radius: 4px; font-family: monospace; font-size: 12px;">
+                    <strong>Reason:</strong> {primary_reason}
+                </div>
+            </div>
+            """,
+                unsafe_allow_html=True,
+            )
 
         # Quick stats
         wrong_count = total - correct_count
@@ -1122,7 +1110,7 @@ def display_test_results_live(
 def display_final_test_results(
     accuracy: float, precision: float, recall: float, report: dict, results: List[Dict]
 ):
-    """Display final test results and metrics."""
+    """Display final test results using cards instead of tables to prevent truncation."""
     st.subheader("🎯 Final Test Results")
 
     # Main metrics
@@ -1180,24 +1168,74 @@ def display_final_test_results(
     with col4:
         st.metric("Error Count", error_count)
 
-    # Confusion matrix visualization
-    st.subheader("🔍 Detailed Test Results")
+    # Detailed test results using cards instead of table
+    st.subheader("🔍 Complete Test Results")
 
-    # Create results DataFrame with better formatting
-    detailed_results = []
-    for result in results:
-        detailed_results.append(
-            {
-                "Domain": result["domain"],
-                "True Label": result["true_label"],
-                "Predicted Label": result["predicted_label"],
-                "Confidence": f"{result['confidence']:.1f}%",
-                "Correct": "✅ Yes" if result["correct"] else "❌ No",
-            }
+    # Provider emoji function
+    def get_provider_emoji(provider):
+        if provider == "AWS":
+            return "🟧"
+        elif provider == "GCP":
+            return "🔵"
+        elif provider == "Azure":
+            return "🔷"
+        elif provider == "Error":
+            return "❌"
+        else:
+            return "⚫"
+
+    # Display all results as cards
+    for i, result in enumerate(results):
+        is_correct = result.get("correct", False)
+        domain = result["domain"]
+        true_label = result["true_label"]
+        predicted_label = result["predicted_label"]
+        confidence = result.get("confidence", 0)
+        primary_reason = result.get("primary_reason", "No reason provided")
+
+        # Color coding based on correctness
+        if is_correct:
+            card_color = "#d4f6d4"  # Light green
+            status_emoji = "✅"
+            status_text = "CORRECT"
+            border_color = "#28a745"
+        else:
+            card_color = "#f6d4d4"  # Light red
+            status_emoji = "❌"
+            status_text = "WRONG"
+            border_color = "#dc3545"
+
+        true_emoji = get_provider_emoji(true_label)
+        pred_emoji = get_provider_emoji(predicted_label)
+
+        # Create test result card with full reason visibility
+        st.markdown(
+            f"""
+        <div style="
+            background-color: {card_color};
+            padding: 20px;
+            border-radius: 10px;
+            border-left: 5px solid {border_color};
+            margin: 10px 0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        ">
+            <h4 style="margin: 0 0 15px 0; color: #333;">
+                {status_emoji} <strong>{domain}</strong> - {status_text}
+            </h4>
+            <div style="margin-bottom: 10px; font-size: 16px;">
+                <strong>Expected:</strong> {true_emoji} {true_label} | 
+                <strong>Predicted:</strong> {pred_emoji} {predicted_label} ({confidence:.1f}%)
+            </div>
+            <div style="background-color: white; padding: 15px; border-radius: 5px; margin: 10px 0;">
+                <strong>🎯 Primary Reason:</strong><br>
+                <span style="font-family: monospace; font-size: 14px; line-height: 1.5; word-wrap: break-word;">
+                    {primary_reason}
+                </span>
+            </div>
+        </div>
+        """,
+            unsafe_allow_html=True,
         )
-
-    detailed_df = pd.DataFrame(detailed_results)
-    st.dataframe(detailed_df, use_container_width=True)
 
     # Download test results
     csv = pd.DataFrame(results).to_csv(index=False)
