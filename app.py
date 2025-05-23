@@ -309,15 +309,16 @@ def run_accuracy_test(headless_mode: bool):
     """Run accuracy test and display metrics."""
     st.subheader("🧪 Running Accuracy Test...")
 
-    progress_placeholder = st.empty()
-    results_placeholder = st.empty()
+    # Progress tracking
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+
+    # Real-time test results display
+    st.subheader("📊 Live Test Results")
+    test_results_table = st.empty()
+    test_summary_metrics = st.empty()
 
     try:
-        with progress_placeholder.container():
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            status_text.text("Initializing detector...")
-
         # Initialize detector
         detector = CloudProviderDetector(headless=headless_mode)
 
@@ -325,9 +326,9 @@ def run_accuracy_test(headless_mode: bool):
         test_df = pd.read_csv("data/test.csv")
         total_domains = len(test_df)
 
-        status_text.text(f"Testing {total_domains} domains...")
+        status_text.text(f"🧪 Testing {total_domains} domains...")
 
-        # Custom test run with progress
+        # Custom test run with progress and live display
         results = []
         predictions = []
         true_labels = []
@@ -336,28 +337,74 @@ def run_accuracy_test(headless_mode: bool):
             domain = row["domain"]
             true_label = row["cloud_provider"]
 
-            status_text.text(f"Analyzing {i + 1}/{total_domains}: {domain}")
+            status_text.text(f"🔍 Testing {i + 1}/{total_domains}: {domain}")
             progress_bar.progress((i + 1) / total_domains)
 
-            # Run analysis
-            result = asyncio.run(detector.analyze_website(domain))
-            predicted_label = result["primary_cloud_provider"]
+            try:
+                # Run analysis
+                result = asyncio.run(detector.analyze_website(domain))
+                predicted_label = result["primary_cloud_provider"]
+                confidence = result["confidence_score"]
 
-            predictions.append(predicted_label)
-            true_labels.append(true_label)
-            results.append(
-                {
+                predictions.append(predicted_label)
+                true_labels.append(true_label)
+
+                # Determine if prediction is correct
+                is_correct = predicted_label == true_label
+
+                test_result = {
                     "domain": domain,
                     "true_label": true_label,
                     "predicted_label": predicted_label,
-                    "confidence": result["confidence_score"],
+                    "confidence": confidence,
+                    "correct": is_correct,
                 }
-            )
+                results.append(test_result)
 
-        # Clear progress
-        progress_placeholder.empty()
+                # Print result to console for real-time feedback
+                correct_emoji = "✅" if is_correct else "❌"
+                print(
+                    f"{correct_emoji} {domain} → True: {true_label}, Predicted: {predicted_label} ({confidence:.1f}%)"
+                )
 
-        # Calculate metrics
+                # Update status with result
+                status_text.text(
+                    f"{correct_emoji} {i + 1}/{total_domains}: {domain} → {predicted_label} ({'Correct' if is_correct else 'Wrong'})"
+                )
+
+                # Update live test results display
+                display_test_results_live(
+                    results, test_results_table, test_summary_metrics
+                )
+
+            except Exception as e:
+                error_msg = f"Error testing {domain}: {e}"
+                st.error(error_msg)
+                print(f"❌ {domain} → Error: {e}")
+                status_text.text(f"❌ {i + 1}/{total_domains} failed: {domain}")
+
+                # Add error result
+                test_result = {
+                    "domain": domain,
+                    "true_label": true_label,
+                    "predicted_label": "Error",
+                    "confidence": 0,
+                    "correct": False,
+                }
+                results.append(test_result)
+                predictions.append("Error")
+                true_labels.append(true_label)
+
+                # Update display even with errors
+                display_test_results_live(
+                    results, test_results_table, test_summary_metrics
+                )
+
+        # Clear progress indicators
+        progress_bar.empty()
+        status_text.success("✅ Accuracy Test Complete!")
+
+        # Calculate final metrics
         from sklearn.metrics import (
             accuracy_score,
             precision_score,
@@ -377,12 +424,13 @@ def run_accuracy_test(headless_mode: bool):
             true_labels, predictions, labels=labels, zero_division=0, output_dict=True
         )
 
-        # Display results
-        display_test_results(accuracy, precision, recall, report, results)
+        # Display final test results
+        display_final_test_results(accuracy, precision, recall, report, results)
 
     except Exception as e:
         st.error(f"❌ Test failed: {str(e)}")
-        progress_placeholder.empty()
+        progress_bar.empty()
+        status_text.empty()
 
 
 def display_results(results: List[Dict], container):
@@ -610,11 +658,102 @@ def display_final_results(
     return results_df
 
 
-def display_test_results(
+def display_test_results_live(
+    results: List[Dict], test_results_table, test_summary_metrics
+):
+    """Display live test results and summary metrics."""
+    # Create results dataframe for display
+    display_data = []
+    providers = {}
+    total_confidence = 0
+
+    for result in results:
+        provider = result.get("predicted_label", "Unknown")
+        confidence = result.get("confidence", 0)
+
+        providers[provider] = providers.get(provider, 0) + 1
+        total_confidence += confidence
+
+        # Add emoji indicators for predicted provider
+        if provider == "AWS":
+            provider_display = "🟧 AWS"
+        elif provider == "GCP":
+            provider_display = "🔵 GCP"
+        elif provider == "Azure":
+            provider_display = "🔷 Azure"
+        elif provider == "Error":
+            provider_display = "❌ Error"
+        else:
+            provider_display = "⚫ Other"
+
+        # True label display
+        true_label = result.get("true_label", "Unknown")
+        if true_label == "AWS":
+            true_display = "🟧 AWS"
+        elif true_label == "GCP":
+            true_display = "🔵 GCP"
+        elif true_label == "Azure":
+            true_display = "🔷 Azure"
+        else:
+            true_display = "⚫ Other"
+
+        # Confidence indicator
+        if confidence >= 70:
+            confidence_display = f"🟢 {confidence:.1f}%"
+        elif confidence >= 40:
+            confidence_display = f"🟡 {confidence:.1f}%"
+        else:
+            confidence_display = f"🔴 {confidence:.1f}%"
+
+        # Correctness indicator
+        is_correct = result.get("correct", False)
+        correctness_display = "✅ Correct" if is_correct else "❌ Wrong"
+
+        display_data.append(
+            {
+                "Domain": result["domain"],
+                "True": true_display,
+                "Predicted": provider_display,
+                "Confidence": confidence_display,
+                "Result": correctness_display,
+            }
+        )
+
+    # Display current results table
+    test_results_table.dataframe(
+        pd.DataFrame(display_data), use_container_width=True, hide_index=True
+    )
+
+    # Summary metrics
+    total = len(results)
+    avg_confidence = total_confidence / total if total > 0 else 0
+    correct_count = sum(1 for r in results if r.get("correct", False))
+    accuracy_so_far = (correct_count / total * 100) if total > 0 else 0
+
+    col1, col2, col3, col4 = test_summary_metrics.columns(4)
+    with col1:
+        st.metric("Tested", total)
+    with col2:
+        st.metric("Accuracy So Far", f"{accuracy_so_far:.1f}%")
+    with col3:
+        st.metric("Avg Confidence", f"{avg_confidence:.1f}%")
+    with col4:
+        st.metric("Correct", f"{correct_count}/{total}")
+
+    # Provider distribution chart for predictions
+    if providers:
+        st.subheader("🔍 Live Prediction Distribution")
+        provider_df = pd.DataFrame(
+            list(providers.items()), columns=["Provider", "Count"]
+        )
+        st.bar_chart(provider_df.set_index("Provider"))
+
+
+def display_final_test_results(
     accuracy: float, precision: float, recall: float, report: dict, results: List[Dict]
 ):
-    """Display test results with metrics."""
-    st.subheader("🎯 Test Results")
+    """Display final test results and metrics."""
+    st.subheader("🎯 Final Test Results")
 
     # Main metrics
     col1, col2, col3 = st.columns(3)
@@ -647,24 +786,87 @@ def display_test_results(
         metrics_df = pd.DataFrame(class_metrics)
         st.dataframe(metrics_df, use_container_width=True)
 
+    # Test summary statistics
+    total = len(results)
+    correct_count = sum(1 for r in results if r.get("correct", False))
+    error_count = sum(1 for r in results if r.get("predicted_label") == "Error")
+    success_rate = ((total - error_count) / total * 100) if total > 0 else 0
+
+    # Provider breakdown
+    providers = {}
+    for result in results:
+        provider = result.get("predicted_label", "Unknown")
+        providers[provider] = providers.get(provider, 0) + 1
+
+    # Display summary metrics
+    st.subheader("📈 Test Summary")
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Total Tested", total)
+    with col2:
+        st.metric("Test Success Rate", f"{success_rate:.1f}%")
+    with col3:
+        st.metric("Correctly Predicted", f"{correct_count}/{total}")
+    with col4:
+        st.metric("Error Count", error_count)
+
     # Confusion matrix visualization
-    st.subheader("🔍 Detailed Results")
+    st.subheader("🔍 Detailed Test Results")
 
-    # Create results DataFrame
-    detailed_results = pd.DataFrame(results)
-    detailed_results["Correct"] = (
-        detailed_results["true_label"] == detailed_results["predicted_label"]
-    )
+    # Create results DataFrame with better formatting
+    detailed_results = []
+    for result in results:
+        detailed_results.append(
+            {
+                "Domain": result["domain"],
+                "True Label": result["true_label"],
+                "Predicted Label": result["predicted_label"],
+                "Confidence": f"{result['confidence']:.1f}%",
+                "Correct": "✅ Yes" if result["correct"] else "❌ No",
+            }
+        )
 
-    st.dataframe(detailed_results, use_container_width=True)
+    detailed_df = pd.DataFrame(detailed_results)
+    st.dataframe(detailed_df, use_container_width=True)
 
     # Download test results
-    csv = detailed_results.to_csv(index=False)
+    csv = pd.DataFrame(results).to_csv(index=False)
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
     st.download_button(
         label="📥 Download Test Results as CSV",
         data=csv,
-        file_name=f"accuracy_test_results_{time.strftime('%Y%m%d_%H%M%S')}.csv",
+        file_name=f"accuracy_test_results_{timestamp}.csv",
         mime="text/csv",
+        type="primary",
+    )
+
+    # Final summary info
+    st.info(f"""
+    🧪 **Accuracy Test Complete!**
+    
+    ✅ **{total} domains tested**
+    🎯 **{accuracy * 100:.1f}% overall accuracy**
+    📈 **{correct_count} correct predictions**
+    ⚡ **{len([p for p in providers.keys() if p != "Error"])} unique providers detected**
+    
+    💡 Download the results above for further analysis!
+    """)
+
+    # Print summary to console/logs
+    print("\n🧪 ACCURACY TEST COMPLETE!")
+    print(f"📊 Total domains tested: {total}")
+    print(f"🎯 Overall accuracy: {accuracy * 100:.1f}%")
+    print(f"✅ Correct predictions: {correct_count}")
+    print(f"❌ Incorrect predictions: {total - correct_count}")
+    print("☁️ Provider prediction breakdown:")
+    for provider, count in providers.items():
+        if provider != "Error":
+            percentage = (count / total) * 100
+            print(f"   {provider}: {count} predictions ({percentage:.1f}%)")
+    if error_count > 0:
+        print(f"⚠️  Errors encountered: {error_count}")
+    print(
+        f"📁 Test results available for download: accuracy_test_results_{timestamp}.csv"
     )
 
 
