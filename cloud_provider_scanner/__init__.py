@@ -1,1 +1,0 @@
-# Cloud Provider Scanner Package

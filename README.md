@@ -1,104 +1,169 @@
-# Cloud Provider Scanner
+# Cloud Provider Scanner - Focused Version
 
-A comprehensive Python tool that detects which cloud providers are used by websites through multiple analysis methods with high accuracy.
+A precise tool that detects which cloud providers are used by websites by analyzing multiple signals with a focus on backend hosting infrastructure.
 
 ## Features
 
-- **5 Detection Methods** with confidence scoring
-- **3 Major Cloud Providers** supported: AWS, GCP, Azure
-- **High Accuracy** with multi-signal detection
-- **JavaScript Support** via Playwright with requests fallback
-- **Batch Processing** from CSV input to CSV output
+- **IP Range Analysis**: Primary detection method using official cloud provider IP ranges
+- **Backend Endpoint Discovery**: Analyzes network requests to discover additional hosting infrastructure
+- **Security Headers Analysis**: Detects cloud-specific headers
+- **Asset Analysis**: Identifies cloud storage and CDN usage
+- **Accuracy Testing**: Built-in testing framework with metrics
+- **Streamlit Web Interface**: Easy-to-use web application
 
-## Quick Start
+## Supported Providers
 
-### Installation
+- 🟧 **AWS** (Amazon Web Services)
+- 🔵 **GCP** (Google Cloud Platform)  
+- 🔷 **Azure** (Microsoft Azure)
+- ⚫ **Other** (All other providers)
 
+## Detection Methods & Scoring
+
+The tool uses a weighted scoring system:
+
+1. **Primary Domain IP Range Analysis** (60 points) - Strongest signal
+2. **Backend Endpoint IP Analysis** (40 points) - Secondary signal
+3. **Security Headers Analysis** (30 points) - Supporting evidence
+4. **Cloud Assets & CDN Analysis** (60 points max) - Supporting evidence
+
+**Total possible score**: 190 points  
+**Minimum confidence threshold**: 15% to assign a provider
+
+## Installation
+
+1. Install dependencies:
 ```bash
-# Install dependencies
 pip install -r requirements.txt
+```
 
-# Install Playwright browsers
+2. Install Playwright browser:
+```bash
 playwright install chromium
 ```
 
-### Usage
+## Usage
 
-```bash
-# Create test dataset
-python scanner.py --create-test-data
+### Streamlit Web Interface
 
-# Analyze websites
-python scanner.py test_websites.csv
-
-# Analyze custom websites with output file
-python scanner.py input.csv --output results.csv
-
-# Debug mode (watch browser automation)
-python scanner.py input.csv --visible
-```
-
-## Input Format
-
-Create a CSV file with a `url` column:
-
-```csv
-url
-amazon.com
-google.com
-microsoft.com
-netflix.com
-github.com
-```
-
-## Output Format
-
-Results are saved to CSV with these columns:
-
-- `url` - Website analyzed
-- `primary_cloud_provider` - Main detected provider
-- `confidence_score` - Numerical confidence score
-- `main_domain_ips` - IP addresses resolved
-- `error` - Any errors encountered
-
-## Detection Methods
-
-The tool uses 5 sophisticated detection methods:
-
-1. **IP Range Matching** (40 pts) - Checks if IPs belong to known cloud ranges
-2. **SSL Certificate Analysis** (35 pts) - Examines certificate subjects and issuers
-3. **Security Headers Analysis** (25 pts) - Provider-specific header patterns
-4. **DNS Records Analysis** (30 pts) - Checks MX, TXT, NS, CNAME records
-5. **Website Content Analysis** (65 pts) - Scans for cloud provider keywords, SDKs, and assets
-
-## Supported Cloud Providers
-
-- **AWS** (Amazon Web Services) - EC2, S3, CloudFront, Lambda, etc.
-- **GCP** (Google Cloud Platform) - Firebase, App Engine, Cloud Storage, etc.
-- **Azure** (Microsoft) - App Service, Azure Edge, Azure Storage, etc.
-
-## Command Line Options
-
-```bash
-python scanner.py [CSV_FILE] [OPTIONS]
-
-Options:
-  --output, -o FILE     Output CSV file (default: results.csv)
-  --visible             Run browser in visible mode for debugging
-  --create-test-data    Create test dataset with known websites
-```
-
-## Streamlit Web Interface
-
-Run the web interface:
-
+Run the web application:
 ```bash
 streamlit run streamlit_app.py
 ```
 
-Features:
-- Upload CSV files for bulk analysis
-- Real-time progress tracking
+The web interface provides two modes:
+
+#### 📊 Analyze Domains
+- Upload CSV files with domain names
+- Use sample data for testing
 - Download results as CSV
-- Visual confidence scoring
-- Detailed detection method breakdown 
+- Real-time progress tracking
+
+#### 🧪 Run Accuracy Test
+- Test against labeled data in `data/test.csv`
+- Get accuracy, precision, and recall metrics
+- Detailed per-class performance
+- Download test results
+
+### Command Line Usage
+
+```python
+import asyncio
+from detector import CloudProviderDetector
+
+async def analyze_domain():
+    detector = CloudProviderDetector()
+    result = await detector.analyze_website("example.com")
+    print(f"Provider: {result['primary_cloud_provider']}")
+    print(f"Confidence: {result['confidence_score']:.1f}%")
+
+asyncio.run(analyze_domain())
+```
+
+### Accuracy Testing
+
+```python
+from detector import CloudProviderDetector
+
+detector = CloudProviderDetector()
+results = detector.run_test("data/test.csv")
+print(f"Accuracy: {results['accuracy']:.3f}")
+print(f"Precision: {results['precision']:.3f}")
+print(f"Recall: {results['recall']:.3f}")
+```
+
+## Data Files
+
+The tool uses local IP range files for maximum reliability:
+
+- `data/aws_ranges.json` - AWS IP ranges
+- `data/gcp_ranges.json` - Google Cloud IP ranges  
+- `data/azure_ranges.json` - Microsoft Azure IP ranges
+- `data/test.csv` - Labeled test data for accuracy evaluation
+
+## CSV File Format
+
+For domain analysis, your CSV file should contain:
+
+```csv
+domain
+netflix.com
+spotify.com
+github.com
+```
+
+The column name can be customized in the web interface.
+
+## Test Data Format
+
+The test data should follow this format:
+
+```csv
+record_id,domain,name,cloud_provider
+1,example.com,Example Company,AWS
+2,test.com,Test Company,GCP
+```
+
+## Configuration
+
+### Detector Options
+
+```python
+detector = CloudProviderDetector(
+    headless=True  # Run browser in headless mode
+)
+```
+
+### Analysis Focus
+
+This tool focuses on **backend hosting infrastructure**, not CDN or delivery layers. It's optimized for:
+
+- Accurate detection of actual hosting providers
+- Robust IP range matching
+- Minimal false positives
+- High confidence scoring
+
+## Performance
+
+- **IP Range Loading**: ~75,000 ranges loaded in <1 second
+- **Domain Analysis**: ~10-30 seconds per domain (depending on complexity)
+- **Accuracy**: Optimized for precision over recall
+
+## Limitations
+
+- Only detects AWS, GCP, and Azure (other providers marked as "Other")
+- Requires internet connectivity for domain resolution and web scraping
+- Some domains may use multiple providers (reports primary only)
+- CDN usage may not reflect backend hosting
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests if applicable
+5. Submit a pull request
+
+## License
+
+This project is licensed under the MIT License. 
