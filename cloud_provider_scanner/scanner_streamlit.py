@@ -3,12 +3,16 @@
 Cloud Provider Detection Tool - Streamlit Version
 
 A precise tool that detects which cloud providers are used by websites
-by analyzing only the most reliable signal:
+by analyzing multiple signals:
 
 - IP range matching of main domain against official cloud provider IP ranges
+- SSL certificate analysis
+- Security headers analysis
+- DNS records analysis
+- Website content analysis
 
 This focuses on backend hosting, not CDN or delivery infrastructure.
-Supports AWS, GCP, Azure, and OVH. Other providers are categorized as "Other".
+Supports AWS, GCP, and Azure. Other providers are categorized as "Other".
 
 Optimized for Streamlit usage with better error handling and progress reporting.
 """
@@ -72,43 +76,6 @@ class CloudProviderDetector:
                 "js_libraries": ["azure-storage", "azure-functions"],
                 "asset_domains": ["blob.core.windows.net", "azurewebsites.net"],
                 "content_keywords": ["Azure", "Microsoft Azure", "App Service"],
-            },
-            "OVH": {
-                "known_ranges": [
-                    "37.59.0.0/16",
-                    "37.187.0.0/16",
-                    "46.105.0.0/16",
-                    "51.68.0.0/16",
-                    "51.75.0.0/16",
-                    "51.77.0.0/16",
-                    "51.79.0.0/16",
-                    "51.81.0.0/16",
-                    "51.83.0.0/16",
-                    "51.89.0.0/16",
-                    "51.91.0.0/16",
-                    "137.74.0.0/16",
-                    "141.94.0.0/16",
-                    "141.95.0.0/16",
-                    "146.59.0.0/16",
-                    "151.80.0.0/16",
-                    "158.69.0.0/16",
-                    "164.132.0.0/16",
-                    "167.114.0.0/16",
-                    "178.32.0.0/15",
-                    "188.165.0.0/16",
-                    "192.95.0.0/16",
-                    "198.27.64.0/18",
-                    "198.50.128.0/17",
-                    "199.241.128.0/17",
-                    "213.186.32.0/19",
-                    "213.251.128.0/18",
-                ],
-                "cdn_domains": ["ovhcdn.net", "ovh.net"],
-                "ssl_issuers": ["OVH"],
-                "security_headers": ["x-ovh-request-id"],
-                "js_libraries": [],
-                "asset_domains": ["ovh.net"],
-                "content_keywords": ["OVH", "So you Start", "Kimsufi"],
             },
         }
 
@@ -208,10 +175,6 @@ class CloudProviderDetector:
             except Exception as e:
                 print(f"Failed to load Azure IP ranges: {e}")
                 self.ip_ranges["Azure"] = []
-
-            # OVH known ranges
-            self.ip_ranges["OVH"] = self.cloud_patterns["OVH"]["known_ranges"]
-            print(f"Loaded {len(self.ip_ranges['OVH'])} OVH IP ranges")
 
     def resolve_domain_to_ips(self, domain: str) -> List[str]:
         """Resolve domain to IP addresses."""

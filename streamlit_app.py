@@ -167,7 +167,6 @@ def main():
         - 🟧 AWS (Amazon Web Services)
         - 🔵 GCP (Google Cloud Platform)  
         - 🔷 Azure (Microsoft Azure)
-        - 🟠 OVH
         - ⚫ Other providers
         
         **Detection Method:**

@@ -1,65 +1,70 @@
 # Cloud Provider Scanner - Streamlit App
 
-A web-based tool for detecting which cloud providers are hosting your domains. Upload a CSV file with domain names and get detailed analysis results with an intuitive interface.
+A web-based cloud provider detection tool that analyzes websites to determine which cloud providers host them.
 
 ## Features
 
-- 🔍 **Accurate Detection**: Uses official IP ranges from AWS, GCP, Azure, and OVH
-- 📊 **Interactive Results**: Sortable, filterable tables with progress bars
-- 📈 **Visual Analytics**: Charts showing provider distribution
-- 💾 **Export Results**: Download analysis results as CSV
-- 🚀 **Easy Upload**: Simple CSV file upload with column name configuration
-- 📱 **Responsive Design**: Works on desktop and mobile devices
+- **Multi-Signal Detection**: Uses 5 different analysis methods
+- **Major Cloud Providers**: AWS, GCP, Azure
+- **Web Interface**: Easy-to-use Streamlit interface
+- **Batch Processing**: Upload CSV files for bulk analysis
+- **Real-time Progress**: See analysis progress in real-time
+- **Confidence Scoring**: Weighted confidence scores for each detection
+
+## Detection Methods
+
+1. **IP Range Analysis** (40 points) - Most reliable signal
+2. **SSL Certificate Analysis** (35 points) - Certificate issuer detection
+3. **Security Headers Analysis** (25 points) - Provider-specific headers
+4. **DNS Records Analysis** (30 points) - CNAME and MX record patterns
+5. **Website Content Analysis** (65 points) - Keywords, JS libraries, assets
 
 ## Quick Start
 
 ### Local Development
 
-1. **Clone and navigate to the directory:**
-   ```bash
-   cd cloud-provider-scanner
-   ```
-
-2. **Install dependencies:**
+1. **Install Dependencies**:
    ```bash
    pip install -r requirements.txt
-   ```
-
-3. **Install Playwright browsers:**
-   ```bash
    playwright install chromium
    ```
 
-4. **Run the Streamlit app:**
+2. **Run the App**:
    ```bash
    streamlit run streamlit_app.py
    ```
 
-5. **Open your browser** to `http://localhost:8501`
+3. **Open your browser** to `http://localhost:8501`
 
 ### Using the App
 
-1. **Upload CSV File**: Click "Upload CSV file with domains" and select your file
-2. **Configure Column**: Enter the column name containing your domain names (default: "url")
-3. **Start Analysis**: Click "🚀 Start Analysis" to begin processing
-4. **View Results**: See real-time progress and detailed results
-5. **Download**: Export your results as CSV for further analysis
+1. **Upload a CSV file** with a column containing domain names
+2. **Select the domain column** from your CSV
+3. **Click "Start Analysis"** to begin detection
+4. **Download results** as a CSV file when complete
 
-## CSV File Format
+## CSV Format
 
-Your CSV file should contain a column with domain names. Example:
+Your input CSV should have domains in one column:
 
 ```csv
-url,company_name
-netflix.com,Netflix
-spotify.com,Spotify
-github.com,GitHub
+domain
+netflix.com
+github.com
+microsoft.com
+firebase.google.com
 ```
 
-Domains can be with or without protocol:
-- ✅ `netflix.com`
-- ✅ `https://netflix.com`
-- ✅ `http://example.org`
+## Supported Cloud Providers
+
+- **AWS** (Amazon Web Services) - 🟧
+- **GCP** (Google Cloud Platform) - 🔵  
+- **Azure** (Microsoft Azure) - 🔷
+- **Other** providers - ⚫
+
+## Configuration
+
+The app automatically detects cloud providers using official IP ranges and signatures.
 
 ## Deployment Options
 
@@ -133,14 +138,6 @@ Domains can be with or without protocol:
    docker build -t cloud-provider-scanner .
    docker run -p 8501:8501 cloud-provider-scanner
    ```
-
-## Supported Cloud Providers
-
-- **AWS** (Amazon Web Services) - 🟧
-- **GCP** (Google Cloud Platform) - 🔵  
-- **Azure** (Microsoft Azure) - 🔷
-- **OVH** - 🟠
-- **Other** providers - ⚫
 
 ## How It Works
 
