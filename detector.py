@@ -40,28 +40,78 @@ try:
 
     PLAYWRIGHT_AVAILABLE = True
 
-    # Test if browsers are actually available
+    # Test if browsers are actually available and install if needed
     try:
         import subprocess
         import sys
+        import os
+
+        # Check if we're in a deployment environment (like Streamlit Cloud)
+        is_deployment = os.environ.get("STREAMLIT_SHARING_MODE") or os.environ.get(
+            "GITHUB_CODESPACE_TOKEN"
+        )
 
         # Quick test to see if browsers are available
         result = subprocess.run(
             [
                 sys.executable,
                 "-c",
-                "from playwright.sync_api import sync_playwright; p = sync_playwright(); p.start().chromium.launch()",
+                "from playwright.sync_api import sync_playwright; p = sync_playwright(); p.start().chromium.launch(headless=True)",
             ],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=10,
         )
         BROWSERS_AVAILABLE = result.returncode == 0
-    except Exception:
-        BROWSERS_AVAILABLE = False
 
-    if not BROWSERS_AVAILABLE:
-        print("Note: Playwright browsers not available - using IP-only analysis mode")
+        # If browsers aren't available, try to install them
+        if not BROWSERS_AVAILABLE:
+            print("Browsers not detected, attempting installation...")
+            try:
+                # Install browsers
+                install_result = subprocess.run(
+                    [sys.executable, "-m", "playwright", "install", "chromium"],
+                    capture_output=True,
+                    text=True,
+                    timeout=120,  # Allow more time for installation
+                )
+
+                if install_result.returncode == 0:
+                    print("Browser installation successful!")
+                    # Test again after installation
+                    test_result = subprocess.run(
+                        [
+                            sys.executable,
+                            "-c",
+                            "from playwright.sync_api import sync_playwright; p = sync_playwright(); p.start().chromium.launch(headless=True)",
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
+                    BROWSERS_AVAILABLE = test_result.returncode == 0
+                    if BROWSERS_AVAILABLE:
+                        print("Browser test successful after installation!")
+                    else:
+                        print(
+                            "Browser test failed after installation, using IP-only mode"
+                        )
+                else:
+                    print(f"Browser installation failed: {install_result.stderr}")
+                    BROWSERS_AVAILABLE = False
+
+            except Exception as e:
+                print(f"Browser installation error: {e}")
+                BROWSERS_AVAILABLE = False
+
+        if not BROWSERS_AVAILABLE:
+            print("Note: Using IP-only analysis mode (most reliable method)")
+        else:
+            print("Full browser-enabled analysis mode active")
+
+    except Exception as e:
+        print(f"Browser availability check failed: {e}")
+        BROWSERS_AVAILABLE = False
 
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False

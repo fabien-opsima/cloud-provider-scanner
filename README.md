@@ -10,6 +10,7 @@ A precise tool that detects which cloud providers are used by websites by analyz
 - **Asset Analysis**: Identifies cloud storage and CDN usage
 - **Accuracy Testing**: Built-in testing framework with metrics
 - **Streamlit Web Interface**: Easy-to-use web application
+- **Robust Deployment**: Works with or without browser dependencies
 
 ## Supported Providers
 
@@ -20,27 +21,48 @@ A precise tool that detects which cloud providers are used by websites by analyz
 
 ## Detection Methods & Scoring
 
-The tool uses a weighted scoring system:
+The tool uses a weighted scoring system with intelligent fallback:
 
+### Full Analysis Mode (with browsers)
 1. **Primary Domain IP Range Analysis** (60 points) - Strongest signal
 2. **Backend Endpoint IP Analysis** (40 points) - Secondary signal
 3. **Security Headers Analysis** (30 points) - Supporting evidence
 4. **Cloud Assets & CDN Analysis** (60 points max) - Supporting evidence
 
-**Total possible score**: 190 points  
+### IP-Only Mode (without browsers)
+1. **Primary Domain IP Range Analysis** (60 points) - Most reliable method
+2. **Security Headers Analysis** (30 points) - HTTP headers only
+
+**Total possible score**: 190 points (full mode) / 90 points (IP-only mode)  
 **Minimum confidence threshold**: 15% to assign a provider
 
 ## Installation
+
+### Local Development
 
 1. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-2. Install Playwright browser:
+2. Install Playwright browsers (for full functionality):
 ```bash
 playwright install chromium
 ```
+
+Or run the browser installation script:
+```bash
+python install_browsers.py
+```
+
+### Streamlit Cloud Deployment
+
+The app is configured for seamless Streamlit Cloud deployment:
+
+- **System dependencies**: Automatically installed via `packages.txt`
+- **Browser installation**: Automatic during app startup
+- **Graceful fallback**: Works in IP-only mode if browsers fail
+- **No manual setup required**
 
 ## Usage
 
@@ -48,20 +70,24 @@ playwright install chromium
 
 Run the web application:
 ```bash
-streamlit run streamlit_app.py
+streamlit run app.py
 ```
 
-The web interface provides two modes:
+The interface automatically detects available features:
+
+- 🚀 **Full Analysis Mode**: When browsers are available
+- 🔍 **IP-Only Analysis Mode**: Reliable fallback mode
 
 #### 📊 Analyze Domains
 - Upload CSV files with domain names
 - Use sample data for testing
 - Download results as CSV
-- Real-time progress tracking
+- Real-time progress tracking with live results
 
 #### 🧪 Run Accuracy Test
 - Test against labeled data in `data/test.csv`
 - Get accuracy, precision, and recall metrics
+- Live test results with correct/incorrect indicators
 - Detailed per-class performance
 - Download test results
 

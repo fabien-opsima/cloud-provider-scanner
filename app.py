@@ -112,16 +112,28 @@ def main():
         try:
             from detector import BROWSERS_AVAILABLE
 
-            if not BROWSERS_AVAILABLE:
+            if BROWSERS_AVAILABLE:
+                st.success("""
+                🚀 **Full Analysis Mode Active**
+                
+                All browser features available for comprehensive analysis!
+                
+                ✅ **IP Range Analysis** (Primary detection)
+                🔍 **Backend Endpoint Discovery** 
+                🛡️ **Security Headers Analysis**
+                📦 **Cloud Assets & CDN Detection**
+                ⚡ **Maximum accuracy and detail**
+                """)
+            else:
                 st.info("""
                 🔍 **IP-Only Analysis Mode**
                 
-                Browsers not detected - using IP range analysis only.
-                This is the most reliable detection method and works perfectly!
+                Using IP range analysis - the most reliable detection method!
                 
                 ✅ **Still detects:** AWS, GCP, Azure
                 ⚡ **Faster:** No browser overhead
                 🎯 **Accurate:** Based on official IP ranges
+                📊 **Reliable:** Core detection functionality
                 """)
         except:
             pass
