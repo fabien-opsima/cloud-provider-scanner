@@ -514,88 +514,14 @@ def run_accuracy_test(headless_mode: bool):
 
 
 def display_results(results: List[Dict], container):
-    """Display analysis results in real-time."""
+    """Display analysis results using individual cards for better readability."""
     if not results:
         return
 
     with container.container():
-        # Create results dataframe for display
-        display_data = []
-        for result in results:
-            provider = result.get("primary_cloud_provider", "Unknown")
-            confidence = result.get("confidence_score", 0)
-            primary_reason = result.get("primary_reason", "No reason provided")
-
-            # Add emoji indicators
-            if provider == "AWS":
-                provider_display = "🟧 AWS"
-            elif provider == "GCP":
-                provider_display = "🔵 GCP"
-            elif provider == "Azure":
-                provider_display = "🔷 Azure"
-            elif provider == "Error":
-                provider_display = "❌ Error"
-            else:
-                provider_display = "⚫ Other"
-
-            # Confidence indicator
-            if confidence >= 70:
-                confidence_display = f"🟢 {confidence:.1f}%"
-            elif confidence >= 40:
-                confidence_display = f"🟡 {confidence:.1f}%"
-            else:
-                confidence_display = f"🔴 {confidence:.1f}%"
-
-            # Wrap long primary reason text for better display
-            reason_display = primary_reason
-            if len(reason_display) > 80:
-                # Insert line breaks at logical points for better wrapping
-                import textwrap
-
-                reason_display = "\n".join(textwrap.wrap(reason_display, width=80))
-
-            display_data.append(
-                {
-                    "Domain": result["url"],
-                    "Provider": provider_display,
-                    "Confidence": confidence_display,
-                    "Primary Reason": reason_display,
-                    "Status": "✅ Success" if provider != "Error" else "❌ Failed",
-                }
-            )
-
-        # Display current results table with better formatting
         st.subheader(f"📊 Results ({len(results)} analyzed)")
 
-        # Custom CSS for better table display
-        st.markdown(
-            """
-        <style>
-        .stDataFrame {
-            width: 100%;
-        }
-        .stDataFrame td {
-            white-space: pre-wrap !important;
-            word-wrap: break-word !important;
-            max-width: none !important;
-            vertical-align: top !important;
-        }
-        .stDataFrame th {
-            white-space: nowrap !important;
-        }
-        </style>
-        """,
-            unsafe_allow_html=True,
-        )
-
-        # Use st.table for better text wrapping instead of st.dataframe
-        if display_data:
-            import pandas as pd
-
-            df = pd.DataFrame(display_data)
-            st.table(df)
-
-        # Summary metrics
+        # Summary metrics first
         total = len(results)
         providers = {}
         high_confidence = 0
@@ -623,9 +549,141 @@ def display_results(results: List[Dict], container):
                 "Providers Found", len([p for p in providers.keys() if p != "Error"])
             )
 
-        # Provider distribution
+        # Individual result cards for better readability
+        st.subheader("🔍 Detailed Results")
+
+        for i, result in enumerate(results):
+            provider = result.get("primary_cloud_provider", "Unknown")
+            confidence = result.get("confidence_score", 0)
+            primary_reason = result.get("primary_reason", "No reason provided")
+
+            # Color coding based on confidence
+            if confidence >= 70:
+                card_color = "#d4f6d4"  # Light green
+                confidence_emoji = "🟢"
+            elif confidence >= 40:
+                card_color = "#fff4d4"  # Light yellow
+                confidence_emoji = "🟡"
+            else:
+                card_color = "#f6d4d4"  # Light red
+                confidence_emoji = "🔴"
+
+            # Provider emoji
+            if provider == "AWS":
+                provider_emoji = "🟧"
+            elif provider == "GCP":
+                provider_emoji = "🔵"
+            elif provider == "Azure":
+                provider_emoji = "🔷"
+            elif provider == "Error":
+                provider_emoji = "❌"
+            else:
+                provider_emoji = "⚫"
+
+            # Create individual result card
+            st.markdown(
+                f"""
+            <div style="
+                background-color: {card_color};
+                padding: 20px;
+                border-radius: 10px;
+                border-left: 5px solid #007acc;
+                margin: 10px 0;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            ">
+                <h4 style="margin: 0 0 15px 0; color: #333;">
+                    {provider_emoji} <strong>{result["url"]}</strong> → {provider} {confidence_emoji} {confidence:.1f}%
+                </h4>
+                <div style="background-color: white; padding: 15px; border-radius: 5px; margin: 10px 0;">
+                    <strong>🎯 Primary Reason:</strong><br>
+                    <span style="font-family: monospace; font-size: 14px; line-height: 1.5;">
+                        {primary_reason}
+                    </span>
+                </div>
+            </div>
+            """,
+                unsafe_allow_html=True,
+            )
+
+            # Additional details in expander
+            with st.expander(f"🔍 Full Details for {result['url']}", expanded=False):
+                col1, col2 = st.columns([2, 1])
+
+                with col1:
+                    # Show backend data
+                    backend_data = result.get("details", {}).get("backend_data", {})
+
+                    if backend_data.get("xhr_api_calls"):
+                        st.write("**🎯 XHR API Calls Found:**")
+                        for api in backend_data["xhr_api_calls"]:
+                            st.code(api, language="text")
+
+                    if backend_data.get("cloud_provider_domains"):
+                        st.write("**☁️ Direct Cloud Provider Calls:**")
+                        for domain_info in backend_data["cloud_provider_domains"]:
+                            if isinstance(domain_info, tuple):
+                                if len(domain_info) == 3:
+                                    domain, provider_name, service_type = domain_info
+                                    st.success(
+                                        f"🔗 **{domain}** → {provider_name} {service_type}"
+                                    )
+                                else:
+                                    domain, provider_name = domain_info
+                                    st.success(f"🔗 **{domain}** → {provider_name}")
+                            else:
+                                st.success(f"🔗 **{domain_info}**")
+
+                    if backend_data.get("app_subdomains"):
+                        st.write("**📱 App Subdomains Explored:**")
+                        for subdomain in backend_data["app_subdomains"]:
+                            st.info(f"📍 {subdomain}")
+
+                    # Show evidence with enhanced details
+                    evidence = result.get("evidence", [])
+                    if evidence:
+                        st.write("**🔍 Technical Evidence:**")
+                        for ev in evidence:
+                            method = ev["method"]
+                            evidence_text = ev["evidence"]
+                            points = ev["confidence_points"]
+
+                            st.write(f"**{method}** (+{points} pts)")
+                            st.write(f"📋 {evidence_text}")
+
+                            # Show detailed technical info if available
+                            if ev.get("details"):
+                                details = ev["details"]
+                                with st.container():
+                                    st.markdown("**Technical Details:**")
+                                    if details.get("endpoint_url"):
+                                        st.code(f"Endpoint: {details['endpoint_url']}")
+                                    if details.get("ip_address"):
+                                        st.code(f"IP Address: {details['ip_address']}")
+                                    if details.get("ip_range"):
+                                        st.code(f"IP Range: {details['ip_range']}")
+                                    if details.get("cloud_domain"):
+                                        st.code(
+                                            f"Cloud Domain: {details['cloud_domain']}"
+                                        )
+                                    if details.get("service_type"):
+                                        st.code(f"Service: {details['service_type']}")
+                            st.write("---")
+
+                with col2:
+                    # Summary info
+                    st.metric("Confidence Score", f"{confidence:.1f}%")
+
+                    # All provider scores
+                    if result.get("details", {}).get("provider_scores"):
+                        st.write("**📊 All Scores:**")
+                        scores = result["details"]["provider_scores"]
+                        for prov, score in scores.items():
+                            if score > 0:
+                                st.write(f"• **{prov}**: {score:.1f}")
+
+        # Provider distribution chart
         if providers and len(providers) > 1:
-            st.subheader("🔍 Live Provider Distribution")
+            st.subheader("🔍 Provider Distribution")
             provider_df = pd.DataFrame(
                 list(providers.items()), columns=["Provider", "Count"]
             )

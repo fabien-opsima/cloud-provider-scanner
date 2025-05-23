@@ -332,7 +332,7 @@ class CloudProviderDetector:
 
                             # Check if it's a direct cloud provider domain call
                             elif request_domain:
-                                # Check for AWS domains
+                                # Check for AWS services with specific service identification
                                 if any(
                                     pattern in request_domain.lower()
                                     for pattern in [
@@ -341,9 +341,16 @@ class CloudProviderDetector:
                                         ".execute-api",
                                     ]
                                 ):
-                                    cloud_calls.add((request_domain, "AWS"))
-                                    print(f"  ☁️ XHR to AWS: {request_domain}")
-                                # Check for GCP domains (excluding Maps API)
+                                    service_type = self._identify_aws_service(
+                                        request_domain
+                                    )
+                                    cloud_calls.add(
+                                        (request_domain, "AWS", service_type)
+                                    )
+                                    print(
+                                        f"  ☁️ XHR to AWS {service_type}: {request_domain}"
+                                    )
+                                # Check for GCP services (excluding Maps API)
                                 elif any(
                                     pattern in request_domain.lower()
                                     for pattern in [
@@ -361,13 +368,20 @@ class CloudProviderDetector:
                                             "maps.gstatic.com",
                                         ]
                                     ):
-                                        cloud_calls.add((request_domain, "GCP"))
-                                        print(f"  ☁️ XHR to GCP: {request_domain}")
+                                        service_type = self._identify_gcp_service(
+                                            request_domain
+                                        )
+                                        cloud_calls.add(
+                                            (request_domain, "GCP", service_type)
+                                        )
+                                        print(
+                                            f"  ☁️ XHR to GCP {service_type}: {request_domain}"
+                                        )
                                     else:
                                         print(
                                             f"  🗺️ Skipping Google Maps API: {request_domain}"
                                         )
-                                # Check for Azure domains
+                                # Check for Azure services
                                 elif any(
                                     pattern in request_domain.lower()
                                     for pattern in [
@@ -376,8 +390,15 @@ class CloudProviderDetector:
                                         ".azureedge.net",
                                     ]
                                 ):
-                                    cloud_calls.add((request_domain, "Azure"))
-                                    print(f"  ☁️ XHR to Azure: {request_domain}")
+                                    service_type = self._identify_azure_service(
+                                        request_domain
+                                    )
+                                    cloud_calls.add(
+                                        (request_domain, "Azure", service_type)
+                                    )
+                                    print(
+                                        f"  ☁️ XHR to Azure {service_type}: {request_domain}"
+                                    )
 
                     except Exception:
                         pass
@@ -616,19 +637,31 @@ class CloudProviderDetector:
                 print(
                     f"  ☁️ Found {len(cloud_provider_calls)} direct cloud provider XHR calls..."
                 )
-                for domain_provider_tuple in cloud_provider_calls:
-                    if isinstance(domain_provider_tuple, tuple):
-                        cloud_domain, provider = domain_provider_tuple
+                for cloud_call_info in cloud_provider_calls:
+                    if isinstance(cloud_call_info, tuple):
+                        if len(cloud_call_info) == 3:
+                            cloud_domain, provider, service_type = cloud_call_info
+                        else:
+                            cloud_domain, provider = cloud_call_info[:2]
+                            service_type = f"{provider} Service"
+
                         provider_scores[provider] += 60.0
                         evidence_list.append(
                             {
                                 "method": "Direct Cloud XHR Call",
                                 "provider": provider,
-                                "evidence": f"XHR calls directly to {cloud_domain}",
+                                "evidence": f"XHR calls directly to {cloud_domain} ({service_type})",
                                 "confidence_points": 60,
+                                "details": {
+                                    "cloud_domain": cloud_domain,
+                                    "service_type": service_type,
+                                    "provider": provider,
+                                },
                             }
                         )
-                        print(f"  ✅ Direct cloud call: {cloud_domain} → {provider}")
+                        print(
+                            f"  ✅ Direct cloud call: {cloud_domain} → {provider} {service_type}"
+                        )
 
             # 2. XHR API Headers Analysis (40 points)
             if backend_data["xhr_api_calls"]:
@@ -817,6 +850,89 @@ class CloudProviderDetector:
         except Exception as e:
             print(f"Test failed: {e}")
             return None
+
+    def _identify_aws_service(self, domain: str) -> str:
+        """Identify specific AWS service from domain."""
+        domain_lower = domain.lower()
+
+        if "s3.amazonaws.com" in domain_lower or ".s3." in domain_lower:
+            return "S3 (Simple Storage Service)"
+        elif "execute-api" in domain_lower:
+            return "API Gateway"
+        elif "lambda" in domain_lower:
+            return "Lambda (Serverless Functions)"
+        elif "cloudfront.net" in domain_lower:
+            return "CloudFront (CDN)"
+        elif "ec2" in domain_lower:
+            return "EC2 (Elastic Compute Cloud)"
+        elif "rds" in domain_lower:
+            return "RDS (Relational Database Service)"
+        elif "dynamodb" in domain_lower:
+            return "DynamoDB (NoSQL Database)"
+        elif "cognito" in domain_lower:
+            return "Cognito (User Authentication)"
+        elif "ses" in domain_lower:
+            return "SES (Simple Email Service)"
+        elif "sns" in domain_lower:
+            return "SNS (Simple Notification Service)"
+        elif "sqs" in domain_lower:
+            return "SQS (Simple Queue Service)"
+        elif "elasticloadbalancing" in domain_lower:
+            return "Elastic Load Balancing"
+        else:
+            return "AWS Service"
+
+    def _identify_gcp_service(self, domain: str) -> str:
+        """Identify specific GCP service from domain."""
+        domain_lower = domain.lower()
+
+        if "storage.googleapis.com" in domain_lower:
+            return "Cloud Storage"
+        elif "firestore.googleapis.com" in domain_lower:
+            return "Firestore (NoSQL Database)"
+        elif "cloudfunctions" in domain_lower:
+            return "Cloud Functions (Serverless)"
+        elif "run.app" in domain_lower:
+            return "Cloud Run (Containers)"
+        elif "appengine" in domain_lower:
+            return "App Engine"
+        elif "compute.googleapis.com" in domain_lower:
+            return "Compute Engine (VMs)"
+        elif "bigquery" in domain_lower:
+            return "BigQuery (Data Warehouse)"
+        elif "firebase" in domain_lower:
+            return "Firebase"
+        elif "youtube.googleapis.com" in domain_lower:
+            return "YouTube API"
+        elif "oauth2.googleapis.com" in domain_lower:
+            return "OAuth2 Authentication"
+        elif "analytics.googleapis.com" in domain_lower:
+            return "Google Analytics API"
+        else:
+            return "Google Cloud Service"
+
+    def _identify_azure_service(self, domain: str) -> str:
+        """Identify specific Azure service from domain."""
+        domain_lower = domain.lower()
+
+        if "blob.core.windows.net" in domain_lower:
+            return "Blob Storage"
+        elif "azurewebsites.net" in domain_lower:
+            return "App Service (Web Apps)"
+        elif "database.windows.net" in domain_lower:
+            return "SQL Database"
+        elif "cosmosdb" in domain_lower:
+            return "Cosmos DB (NoSQL)"
+        elif "functions.azure.com" in domain_lower:
+            return "Azure Functions (Serverless)"
+        elif "azureedge.net" in domain_lower:
+            return "Azure CDN"
+        elif "servicebus" in domain_lower:
+            return "Service Bus (Messaging)"
+        elif "vault.azure.net" in domain_lower:
+            return "Key Vault (Security)"
+        else:
+            return "Azure Service"
 
 
 # For compatibility with existing imports
