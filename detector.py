@@ -429,6 +429,8 @@ class CloudProviderDetector:
             "url": url,
             "primary_cloud_provider": "Other",
             "confidence_score": 0,
+            "primary_reason": "No cloud provider detected",
+            "evidence": [],
             "details": {},
         }
 
@@ -440,17 +442,29 @@ class CloudProviderDetector:
 
             # Initialize scores for each provider
             provider_scores = {provider: 0.0 for provider in self.cloud_patterns.keys()}
+            evidence_list = []
 
             # 1. Primary Domain IP Range Analysis (60 points - strongest signal)
             main_ips = self.resolve_domain_to_ips(domain)
             result["details"]["main_domain_ips"] = main_ips
 
+            primary_ip_provider = None
+            primary_ip_match = None
+
             if main_ips:
                 for ip in main_ips:
                     provider = self.check_ip_against_cloud_ranges(ip)
                     if provider:
-                        provider_scores[provider] += (
-                            60.0  # Primary domain IP is strongest signal
+                        provider_scores[provider] += 60.0
+                        primary_ip_provider = provider
+                        primary_ip_match = ip
+                        evidence_list.append(
+                            {
+                                "method": "Primary Domain IP",
+                                "provider": provider,
+                                "evidence": f"IP {ip} matches {provider} ranges",
+                                "confidence_points": 60,
+                            }
                         )
                         break  # Only count one match for main domain
 
@@ -458,22 +472,56 @@ class CloudProviderDetector:
             backend_ips = await self.discover_backend_endpoints(url)
             result["details"]["backend_ips"] = backend_ips
 
+            backend_provider = None
+            backend_match = None
+
             if backend_ips:
                 for ip in backend_ips:
                     provider = self.check_ip_against_cloud_ranges(ip)
                     if provider:
                         provider_scores[provider] += 40.0
+                        if not backend_provider:  # Take first match
+                            backend_provider = provider
+                            backend_match = ip
+                        evidence_list.append(
+                            {
+                                "method": "Backend Endpoint IP",
+                                "provider": provider,
+                                "evidence": f"Backend IP {ip} matches {provider} ranges",
+                                "confidence_points": 40,
+                            }
+                        )
                         break  # Only count one match for backend
 
             # 3. Security Headers Analysis (30 points)
             header_scores = await self.analyze_security_headers(url)
             for provider, score in header_scores.items():
-                provider_scores[provider] += score
+                if score > 0:
+                    provider_scores[provider] += score
+                    evidence_list.append(
+                        {
+                            "method": "Security Headers",
+                            "provider": provider,
+                            "evidence": f"Found {provider}-specific headers",
+                            "confidence_points": score,
+                        }
+                    )
 
             # 4. Asset Analysis (20 points per asset, max 60 points)
             asset_scores = await self.analyze_assets(url)
             for provider, score in asset_scores.items():
-                provider_scores[provider] += min(score, 60.0)  # Cap at 60 points
+                if score > 0:
+                    capped_score = min(score, 60.0)
+                    provider_scores[provider] += capped_score
+                    num_assets = int(score / 20)
+                    evidence_list.append(
+                        {
+                            "method": "Cloud Assets",
+                            "provider": provider,
+                            "evidence": f"Found {num_assets} {provider} asset(s)",
+                            "confidence_points": capped_score,
+                        }
+                    )
 
             # Determine the primary provider based on highest score
             if provider_scores:
@@ -487,20 +535,72 @@ class CloudProviderDetector:
                 # Only assign provider if confidence is above threshold
                 if confidence_score >= 15:  # Minimum threshold
                     result["primary_cloud_provider"] = primary_provider
+
+                    # Determine primary reason based on evidence
+                    primary_reason, main_evidence = self._determine_primary_reason(
+                        evidence_list, primary_provider, primary_ip_match, backend_match
+                    )
+                    result["primary_reason"] = primary_reason
+                    result["evidence"] = [
+                        e for e in evidence_list if e["provider"] == primary_provider
+                    ]
+
                 else:
                     result["primary_cloud_provider"] = "Other"
+                    result["primary_reason"] = (
+                        f"Low confidence ({confidence_score:.1f}%) - no strong indicators"
+                    )
 
                 result["confidence_score"] = confidence_score
                 result["details"]["provider_scores"] = provider_scores
+                result["details"]["all_evidence"] = evidence_list
             else:
                 result["primary_cloud_provider"] = "Other"
                 result["confidence_score"] = 0
+                result["primary_reason"] = "No cloud provider indicators found"
 
         except Exception as e:
             result["details"]["error"] = str(e)
+            result["primary_reason"] = f"Analysis failed: {str(e)}"
             print(f"Error analyzing {url}: {e}")
 
         return result
+
+    def _determine_primary_reason(
+        self, evidence_list, primary_provider, primary_ip_match, backend_match
+    ):
+        """Determine the primary reason for detection based on evidence."""
+        provider_evidence = [
+            e for e in evidence_list if e["provider"] == primary_provider
+        ]
+
+        if not provider_evidence:
+            return "Detection based on combined signals", ""
+
+        # Sort by confidence points to find strongest evidence
+        provider_evidence.sort(key=lambda x: x["confidence_points"], reverse=True)
+        strongest = provider_evidence[0]
+
+        if strongest["method"] == "Primary Domain IP" and primary_ip_match:
+            return (
+                f"Primary domain IP ({primary_ip_match}) in {primary_provider} ranges",
+                strongest["evidence"],
+            )
+        elif strongest["method"] == "Backend Endpoint IP" and backend_match:
+            return (
+                f"Backend endpoint IP ({backend_match}) in {primary_provider} ranges",
+                strongest["evidence"],
+            )
+        elif strongest["method"] == "Security Headers":
+            return f"Detected {primary_provider}-specific security headers", strongest[
+                "evidence"
+            ]
+        elif strongest["method"] == "Cloud Assets":
+            return f"Found {primary_provider} cloud storage/CDN assets", strongest[
+                "evidence"
+            ]
+        else:
+            return strongest["evidence"], strongest["evidence"]
 
     def run_test(self, test_file_path: str = None) -> Dict[str, any]:
         """Run test against labeled data and return accuracy metrics."""

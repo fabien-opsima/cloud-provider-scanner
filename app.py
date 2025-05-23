@@ -388,6 +388,7 @@ def run_accuracy_test(headless_mode: bool):
                 result = asyncio.run(detector.analyze_website(domain))
                 predicted_label = result["primary_cloud_provider"]
                 confidence = result["confidence_score"]
+                primary_reason = result.get("primary_reason", "No reason provided")
 
                 predictions.append(predicted_label)
                 true_labels.append(true_label)
@@ -400,6 +401,7 @@ def run_accuracy_test(headless_mode: bool):
                     "true_label": true_label,
                     "predicted_label": predicted_label,
                     "confidence": confidence,
+                    "primary_reason": primary_reason,
                     "correct": is_correct,
                 }
                 results.append(test_result)
@@ -409,15 +411,16 @@ def run_accuracy_test(headless_mode: bool):
                 print(
                     f"{correct_emoji} {domain} → True: {true_label}, Predicted: {predicted_label} ({confidence:.1f}%) {'CORRECT' if is_correct else 'WRONG'}"
                 )
+                print(f"   Reason: {primary_reason}")
 
                 # Show immediate result with prominent display
                 if is_correct:
                     current_result_placeholder.success(
-                        f"✅ **CORRECT!** `{domain}` → True: {true_label}, Predicted: {predicted_label} ({confidence:.1f}%)"
+                        f"✅ **CORRECT!** `{domain}` → True: {true_label}, Predicted: {predicted_label} ({confidence:.1f}%)\n\n💡 **Reason:** {primary_reason}"
                     )
                 else:
                     current_result_placeholder.error(
-                        f"❌ **WRONG!** `{domain}` → True: {true_label}, Predicted: {predicted_label} ({confidence:.1f}%)"
+                        f"❌ **WRONG!** `{domain}` → True: {true_label}, Predicted: {predicted_label} ({confidence:.1f}%)\n\n💡 **Reason:** {primary_reason}"
                     )
 
                 # Update status with result
@@ -451,6 +454,7 @@ def run_accuracy_test(headless_mode: bool):
                     "true_label": true_label,
                     "predicted_label": "Error",
                     "confidence": 0,
+                    "primary_reason": f"Analysis failed: {error_msg}",
                     "correct": False,
                 }
                 results.append(test_result)
@@ -511,6 +515,7 @@ def display_results(results: List[Dict], container):
         for result in results:
             provider = result.get("primary_cloud_provider", "Unknown")
             confidence = result.get("confidence_score", 0)
+            primary_reason = result.get("primary_reason", "No reason provided")
 
             providers[provider] = providers.get(provider, 0) + 1
             total_confidence += confidence
@@ -535,11 +540,17 @@ def display_results(results: List[Dict], container):
             else:
                 confidence_display = f"🔴 {confidence:.1f}%"
 
+            # Truncate reason if too long for table display
+            reason_display = primary_reason
+            if len(reason_display) > 60:
+                reason_display = reason_display[:57] + "..."
+
             display_data.append(
                 {
                     "Domain": result["url"],
                     "Provider": provider_display,
                     "Confidence": confidence_display,
+                    "Primary Reason": reason_display,
                     "Status": "✅ Success" if provider != "Error" else "❌ Failed",
                 }
             )
@@ -585,19 +596,24 @@ def display_final_results(
     # Create comprehensive results DataFrame
     final_data = []
     for result in results:
+        # Get evidence details
+        evidence_summary = "No evidence"
+        if result.get("evidence"):
+            evidence_methods = [e["method"] for e in result["evidence"]]
+            evidence_summary = ", ".join(set(evidence_methods))
+
         final_data.append(
             {
                 "Domain": result["url"],
                 "Cloud Provider": result["primary_cloud_provider"],
                 "Confidence Score": f"{result['confidence_score']:.1f}%",
+                "Primary Reason": result.get("primary_reason", "No reason provided"),
+                "Evidence Methods": evidence_summary,
                 "Main IPs": ", ".join(
                     result.get("details", {}).get("main_domain_ips", [])
                 ),
                 "Backend IPs": ", ".join(
                     result.get("details", {}).get("backend_ips", [])
-                ),
-                "Provider Scores": str(
-                    result.get("details", {}).get("provider_scores", {})
                 ),
                 "Error": result.get("details", {}).get("error", ""),
             }
@@ -643,7 +659,45 @@ def display_final_results(
         st.bar_chart(provider_df.set_index("Provider"))
 
     # Detailed results table
-    st.subheader("📋 Complete Results")
+    st.subheader("📋 Complete Results with Reasoning")
+
+    # Add expandable details for each domain
+    for i, result in enumerate(results):
+        with st.expander(
+            f"🔍 {result['url']} → {result['primary_cloud_provider']} ({result['confidence_score']:.1f}%)"
+        ):
+            col1, col2 = st.columns([2, 1])
+
+            with col1:
+                st.write(
+                    f"**Primary Reason:** {result.get('primary_reason', 'No reason provided')}"
+                )
+
+                # Show evidence details
+                if result.get("evidence"):
+                    st.write("**Evidence Found:**")
+                    for evidence in result["evidence"]:
+                        st.write(
+                            f"• **{evidence['method']}**: {evidence['evidence']} (+{evidence['confidence_points']} pts)"
+                        )
+
+                # Show all provider scores
+                if result.get("details", {}).get("provider_scores"):
+                    st.write("**All Provider Scores:**")
+                    scores = result["details"]["provider_scores"]
+                    for provider, score in scores.items():
+                        if score > 0:
+                            st.write(f"• {provider}: {score:.1f} points")
+
+            with col2:
+                # Summary info
+                st.metric("Confidence", f"{result['confidence_score']:.1f}%")
+                if result.get("details", {}).get("main_domain_ips"):
+                    st.write("**Main IPs:**")
+                    for ip in result["details"]["main_domain_ips"][:3]:  # Show first 3
+                        st.write(f"• {ip}")
+
+    # Original table for CSV download
     st.dataframe(results_df, use_container_width=True, hide_index=True)
 
     # Download section
@@ -664,6 +718,7 @@ def display_final_results(
                 "Domain": result["url"],
                 "Cloud Provider": result["primary_cloud_provider"],
                 "Confidence": f"{result['confidence_score']:.1f}%",
+                "Primary Reason": result.get("primary_reason", "No reason provided"),
                 "Main IP": result.get("details", {}).get("main_domain_ips", [""])[0]
                 if result.get("details", {}).get("main_domain_ips")
                 else "",
@@ -682,7 +737,7 @@ def display_final_results(
             data=detailed_csv,
             file_name=detailed_filename,
             mime="text/csv",
-            help="Complete analysis data with IPs, scores, and errors",
+            help="Complete analysis data with IPs, scores, reasoning, and errors",
             type="primary",
         )
 
@@ -692,7 +747,7 @@ def display_final_results(
             data=summary_csv,
             file_name=summary_filename,
             mime="text/csv",
-            help="Simplified domain → provider mapping",
+            help="Simplified domain → provider mapping with reasoning",
         )
 
     # Analysis summary info
@@ -703,6 +758,7 @@ def display_final_results(
     🎯 **{success_rate:.1f}% success rate**
     📈 **{high_confidence} high-confidence detections** (≥70%)
     ⚡ **{len([p for p in providers.keys() if p != "Error"])} unique providers found**
+    🔍 **Detailed reasoning provided for each detection**
     
     💡 Use the download buttons above to save your results!
     """)
@@ -737,6 +793,7 @@ def display_test_results_live(
     for result in results:
         provider = result.get("predicted_label", "Unknown")
         confidence = result.get("confidence", 0)
+        primary_reason = result.get("primary_reason", "No reason provided")
 
         providers[provider] = providers.get(provider, 0) + 1
         total_confidence += confidence
@@ -781,12 +838,18 @@ def display_test_results_live(
             correctness_display = "💥 WRONG"
             domain_display = f"❌ {result['domain']}"
 
+        # Truncate reason for table display
+        reason_display = primary_reason
+        if len(reason_display) > 45:
+            reason_display = reason_display[:42] + "..."
+
         display_data.append(
             {
                 "Domain": domain_display,
                 "Expected": true_display,
                 "Predicted": provider_display,
                 "Confidence": confidence_display,
+                "Primary Reason": reason_display,
                 "Accuracy": correctness_display,
             }
         )
