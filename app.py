@@ -156,8 +156,13 @@ def analyze_domains_interface(uploaded_file, domain_column, headless_mode):
     with col1:
         st.subheader("📤 Upload & Analyze")
 
-        # Check if we should use sample data
-        if getattr(st.session_state, "use_sample_data", False):
+        # Auto-load sample data when the app starts (default behavior)
+        auto_load_sample = uploaded_file is None and not hasattr(
+            st.session_state, "sample_data_loaded"
+        )
+
+        # Check if we should use sample data (either auto-load or user clicked button)
+        if getattr(st.session_state, "use_sample_data", False) or auto_load_sample:
             # Create sample data
             sample_data = pd.DataFrame(
                 {
@@ -175,7 +180,13 @@ def analyze_domains_interface(uploaded_file, domain_column, headless_mode):
                     ]
                 }
             )
-            st.success("✅ Sample data loaded!")
+            if auto_load_sample:
+                st.info(
+                    "✨ Sample test data loaded automatically! You can upload your own CSV file above to analyze different domains."
+                )
+                st.session_state.sample_data_loaded = True
+            else:
+                st.success("✅ Sample data loaded!")
             process_domains(sample_data, "domain", headless_mode)
 
         elif uploaded_file is not None:
@@ -562,7 +573,7 @@ def display_results(results: List[Dict], container):
             confidence = result.get("confidence_score", 0)
             primary_reason = result.get("primary_reason", "No reason provided")
 
-            # Color coding based on confidence
+            # Color coding based on correctness and confidence
             if confidence >= 70:
                 card_color = "#d4f6d4"  # Light green
                 confidence_emoji = "🟢"
@@ -570,8 +581,10 @@ def display_results(results: List[Dict], container):
                 card_color = "#fff4d4"  # Light yellow
                 confidence_emoji = "🟡"
             else:
-                card_color = "#f6d4d4"  # Light red
-                confidence_emoji = "🔴"
+                card_color = (
+                    "#f0f0f0"  # Light grey (instead of red - low confidence, not wrong)
+                )
+                confidence_emoji = "⚫"
 
             # Provider emoji
             if provider == "AWS":
@@ -1041,15 +1054,22 @@ def display_test_results_live(
             confidence = result.get("confidence", 0)
             primary_reason = result.get("primary_reason", "No reason provided")
 
-            # Color coding based on correctness
+            # Color coding based on correctness and confidence
             if is_correct:
                 card_color = "#d4f6d4"  # Light green
                 status_emoji = "✅"
                 status_text = "CORRECT"
+                border_color = "#28a745"
+            elif confidence < 30:  # Low confidence - use grey instead of red
+                card_color = "#f0f0f0"  # Light grey
+                status_emoji = "⚫"
+                status_text = "LOW CONFIDENCE"
+                border_color = "#6c757d"
             else:
-                card_color = "#f6d4d4"  # Light red
+                card_color = "#f6d4d4"  # Light red for actual wrong predictions with decent confidence
                 status_emoji = "❌"
                 status_text = "WRONG"
+                border_color = "#dc3545"
 
             # Provider emojis
             def get_provider_emoji(provider):
@@ -1072,7 +1092,7 @@ def display_test_results_live(
                 background-color: {card_color};
                 padding: 15px;
                 border-radius: 8px;
-                border-left: 4px solid {"#28a745" if is_correct else "#dc3545"};
+                border-left: 4px solid {border_color};
                 margin: 8px 0;
                 font-size: 14px;
             ">
@@ -1198,14 +1218,19 @@ def display_final_test_results(
         confidence = result.get("confidence", 0)
         primary_reason = result.get("primary_reason", "No reason provided")
 
-        # Color coding based on correctness
+        # Color coding based on correctness and confidence
         if is_correct:
             card_color = "#d4f6d4"  # Light green
             status_emoji = "✅"
             status_text = "CORRECT"
             border_color = "#28a745"
+        elif confidence < 30:  # Low confidence - use grey instead of red
+            card_color = "#f0f0f0"  # Light grey
+            status_emoji = "⚫"
+            status_text = "LOW CONFIDENCE"
+            border_color = "#6c757d"
         else:
-            card_color = "#f6d4d4"  # Light red
+            card_color = "#f6d4d4"  # Light red for actual wrong predictions with decent confidence
             status_emoji = "❌"
             status_text = "WRONG"
             border_color = "#dc3545"

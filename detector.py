@@ -610,6 +610,7 @@ class CloudProviderDetector:
     async def analyze_xhr_headers(self, xhr_domains: List[str]) -> Dict[str, float]:
         """Analyze headers specifically from XHR API endpoints."""
         scores = {provider: 0.0 for provider in self.cloud_patterns.keys()}
+        header_evidence = []
 
         try:
             # Check headers from XHR API domains
@@ -625,17 +626,28 @@ class CloudProviderDetector:
 
                     for provider, patterns in self.cloud_patterns.items():
                         if patterns.get("security_headers"):
+                            found_headers = []
                             for header_pattern in patterns["security_headers"]:
-                                if any(
-                                    header_pattern.lower() in header.lower()
-                                    for header in headers
-                                ):
-                                    scores[provider] += (
-                                        40.0  # High weight for XHR headers
-                                    )
-                                    print(
-                                        f"  🛡️ Found {provider} header in {api_domain}"
-                                    )
+                                for header_name, header_value in headers.items():
+                                    if header_pattern.lower() in header_name.lower():
+                                        found_headers.append(
+                                            f"{header_name}: {header_value}"
+                                        )
+                                        scores[provider] += (
+                                            40.0  # High weight for XHR headers
+                                        )
+
+                            if found_headers:
+                                header_evidence.append(
+                                    {
+                                        "provider": provider,
+                                        "endpoint": api_domain,
+                                        "headers": found_headers,
+                                    }
+                                )
+                                print(
+                                    f"  🛡️ Found {provider} headers in {api_domain}: {', '.join(found_headers)}"
+                                )
 
                 except Exception as e:
                     print(f"  ❌ Header check failed for {api_domain}: {e}")
@@ -644,6 +656,8 @@ class CloudProviderDetector:
         except Exception as e:
             print(f"XHR header analysis failed: {e}")
 
+        # Store header evidence for later use in reason generation
+        self._header_evidence = header_evidence
         return scores
 
     async def analyze_website(self, url: str) -> Dict[str, any]:
@@ -755,17 +769,51 @@ class CloudProviderDetector:
                 header_scores = await self.analyze_xhr_headers(
                     backend_data["xhr_api_calls"]
                 )
-                for provider, score in header_scores.items():
-                    if score > 0:
-                        provider_scores[provider] += score
+
+                # Add detailed header evidence
+                if hasattr(self, "_header_evidence"):
+                    for header_info in self._header_evidence:
+                        provider = header_info["provider"]
+                        endpoint = header_info["endpoint"]
+                        headers = header_info["headers"]
+
+                        # Create detailed evidence with endpoint and header information
+                        header_details = f"Found {provider}-specific headers at XHR endpoint {endpoint}: {', '.join(headers)}"
+
                         evidence_list.append(
                             {
                                 "method": "XHR API Headers",
                                 "provider": provider,
-                                "evidence": f"Found {provider}-specific headers in XHR API endpoints",
-                                "confidence_points": score,
+                                "evidence": header_details,
+                                "confidence_points": 40,
+                                "details": {
+                                    "endpoint_url": endpoint,
+                                    "headers_found": headers,
+                                    "provider": provider,
+                                },
                             }
                         )
+
+                # Fallback for any providers with header scores but no detailed evidence
+                for provider, score in header_scores.items():
+                    if score > 0:
+                        provider_scores[provider] += score
+                        # Only add generic evidence if we don't already have detailed evidence for this provider
+                        existing_header_evidence = [
+                            e
+                            for e in evidence_list
+                            if e["method"] == "XHR API Headers"
+                            and e["provider"] == provider
+                        ]
+                        if not existing_header_evidence:
+                            evidence_list.append(
+                                {
+                                    "method": "XHR API Headers",
+                                    "provider": provider,
+                                    "evidence": f"Found {provider}-specific headers in XHR API endpoints",
+                                    "confidence_points": score,
+                                }
+                            )
 
             # Determine the primary provider based on highest score
             if provider_scores:
@@ -853,10 +901,20 @@ class CloudProviderDetector:
             # Return the specific evidence text which includes the service type
             return strongest["evidence"], strongest["evidence"]
         elif strongest["method"] == "XHR API Headers":
-            return (
-                f"XHR API endpoints show {primary_provider}-specific headers",
-                strongest["evidence"],
-            )
+            # Check if we have detailed header information
+            details = strongest.get("details", {})
+            if details.get("endpoint_url") and details.get("headers_found"):
+                endpoint = details["endpoint_url"]
+                headers = details["headers_found"]
+                return (
+                    f"XHR endpoint {endpoint} shows {primary_provider}-specific headers: {', '.join(headers)}",
+                    strongest["evidence"],
+                )
+            else:
+                return (
+                    f"XHR API endpoints show {primary_provider}-specific headers",
+                    strongest["evidence"],
+                )
         else:
             return strongest["evidence"], strongest["evidence"]
 
