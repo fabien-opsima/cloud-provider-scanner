@@ -21,6 +21,7 @@ import ipaddress
 import json
 import os
 import asyncio
+import sys
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
 import pandas as pd
@@ -32,7 +33,15 @@ from sklearn.metrics import (
 )
 
 import requests
-from playwright.async_api import async_playwright
+
+# Try to import playwright and install browsers if needed
+try:
+    from playwright.async_api import async_playwright
+
+    PLAYWRIGHT_AVAILABLE = True
+except ImportError:
+    PLAYWRIGHT_AVAILABLE = False
+    print("Warning: Playwright not available. Some features will be limited.")
 
 
 class CloudProviderDetector:
@@ -196,10 +205,43 @@ class CloudProviderDetector:
     async def discover_backend_endpoints(self, url: str) -> List[str]:
         """Discover backend API endpoints and additional IPs."""
         backend_ips = []
+
+        # Check if Playwright is available
+        if not PLAYWRIGHT_AVAILABLE:
+            print(
+                f"Playwright not available - skipping backend endpoint discovery for {url}"
+            )
+            return backend_ips
+
         browser = None
         try:
             async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=self.headless)
+                # Try to install browsers if they're missing
+                try:
+                    browser = await p.chromium.launch(headless=self.headless)
+                except Exception as browser_error:
+                    print(
+                        f"Browser launch failed, attempting to install: {browser_error}"
+                    )
+                    # Try to install browsers programmatically
+                    try:
+                        import subprocess
+
+                        result = subprocess.run(
+                            [sys.executable, "-m", "playwright", "install", "chromium"],
+                            capture_output=True,
+                            text=True,
+                            timeout=60,
+                        )
+                        if result.returncode == 0:
+                            browser = await p.chromium.launch(headless=self.headless)
+                        else:
+                            print(f"Failed to install browsers: {result.stderr}")
+                            return backend_ips
+                    except Exception as install_error:
+                        print(f"Browser installation failed: {install_error}")
+                        return backend_ips
+
                 context = await browser.new_context()
                 page = await context.new_page()
 
@@ -259,10 +301,22 @@ class CloudProviderDetector:
     async def analyze_assets(self, url: str) -> Dict[str, float]:
         """Analyze asset URLs for cloud storage and CDN signatures."""
         scores = {provider: 0.0 for provider in self.cloud_patterns.keys()}
+
+        # Check if Playwright is available
+        if not PLAYWRIGHT_AVAILABLE:
+            print(f"Playwright not available - skipping asset analysis for {url}")
+            return scores
+
         browser = None
         try:
             async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=self.headless)
+                # Try to launch browser with fallback to installation
+                try:
+                    browser = await p.chromium.launch(headless=self.headless)
+                except Exception as browser_error:
+                    print(f"Browser launch failed for asset analysis: {browser_error}")
+                    return scores
+
                 context = await browser.new_context()
                 page = await context.new_page()
 
