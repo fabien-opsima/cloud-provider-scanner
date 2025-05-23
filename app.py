@@ -521,16 +521,10 @@ def display_results(results: List[Dict], container):
     with container.container():
         # Create results dataframe for display
         display_data = []
-        providers = {}
-        total_confidence = 0
-
         for result in results:
             provider = result.get("primary_cloud_provider", "Unknown")
             confidence = result.get("confidence_score", 0)
             primary_reason = result.get("primary_reason", "No reason provided")
-
-            providers[provider] = providers.get(provider, 0) + 1
-            total_confidence += confidence
 
             # Add emoji indicators
             if provider == "AWS":
@@ -552,10 +546,13 @@ def display_results(results: List[Dict], container):
             else:
                 confidence_display = f"🔴 {confidence:.1f}%"
 
-            # Truncate reason if too long for table display
+            # Wrap long primary reason text for better display
             reason_display = primary_reason
-            if len(reason_display) > 60:
-                reason_display = reason_display[:57] + "..."
+            if len(reason_display) > 80:
+                # Insert line breaks at logical points for better wrapping
+                import textwrap
+
+                reason_display = "\n".join(textwrap.wrap(reason_display, width=80))
 
             display_data.append(
                 {
@@ -567,14 +564,51 @@ def display_results(results: List[Dict], container):
                 }
             )
 
-        # Display current results table
+        # Display current results table with better formatting
         st.subheader(f"📊 Results ({len(results)} analyzed)")
-        st.dataframe(
-            pd.DataFrame(display_data), use_container_width=True, hide_index=True
+
+        # Custom CSS for better table display
+        st.markdown(
+            """
+        <style>
+        .stDataFrame {
+            width: 100%;
+        }
+        .stDataFrame td {
+            white-space: pre-wrap !important;
+            word-wrap: break-word !important;
+            max-width: none !important;
+            vertical-align: top !important;
+        }
+        .stDataFrame th {
+            white-space: nowrap !important;
+        }
+        </style>
+        """,
+            unsafe_allow_html=True,
         )
+
+        # Use st.table for better text wrapping instead of st.dataframe
+        if display_data:
+            import pandas as pd
+
+            df = pd.DataFrame(display_data)
+            st.table(df)
 
         # Summary metrics
         total = len(results)
+        providers = {}
+        high_confidence = 0
+        total_confidence = 0
+
+        for result in results:
+            provider = result.get("primary_cloud_provider", "Unknown")
+            confidence = result.get("confidence_score", 0)
+            providers[provider] = providers.get(provider, 0) + 1
+            total_confidence += confidence
+            if confidence >= 70:
+                high_confidence += 1
+
         avg_confidence = total_confidence / total if total > 0 else 0
 
         col1, col2, col3, col4 = st.columns(4)
@@ -583,15 +617,14 @@ def display_results(results: List[Dict], container):
         with col2:
             st.metric("Avg Confidence", f"{avg_confidence:.1f}%")
         with col3:
-            high_confidence = sum(
-                1 for r in results if r.get("confidence_score", 0) >= 70
-            )
             st.metric("High Confidence", f"{high_confidence}")
         with col4:
-            st.metric("Providers Found", len(providers))
+            st.metric(
+                "Providers Found", len([p for p in providers.keys() if p != "Error"])
+            )
 
         # Provider distribution
-        if providers:
+        if providers and len(providers) > 1:
             st.subheader("🔍 Live Provider Distribution")
             provider_df = pd.DataFrame(
                 list(providers.items()), columns=["Provider", "Count"]
@@ -625,12 +658,19 @@ def display_final_results(
             ]
         )
 
+        # Wrap long text fields for better display
+        primary_reason = result.get("primary_reason", "No reason provided")
+        if len(primary_reason) > 100:
+            import textwrap
+
+            primary_reason = "\n".join(textwrap.wrap(primary_reason, width=100))
+
         final_data.append(
             {
                 "Domain": result["url"],
                 "Cloud Provider": result["primary_cloud_provider"],
                 "Confidence Score": f"{result['confidence_score']:.1f}%",
-                "Primary Reason": result.get("primary_reason", "No reason provided"),
+                "Primary Reason": primary_reason,
                 "Evidence Methods": evidence_summary,
                 "XHR API Calls": xhr_apis if xhr_apis else "None detected",
                 "App Subdomains": app_subdomains if app_subdomains else "None detected",
@@ -695,9 +735,15 @@ def display_final_results(
             col1, col2 = st.columns([2, 1])
 
             with col1:
-                st.write(
-                    f"**Primary Reason:** {result.get('primary_reason', 'No reason provided')}"
-                )
+                primary_reason = result.get("primary_reason", "No reason provided")
+
+                # Display primary reason with proper formatting
+                st.write("**Primary Reason:**")
+                if len(primary_reason) > 120:
+                    # For very long reasons, use an info box for better readability
+                    st.info(primary_reason)
+                else:
+                    st.write(primary_reason)
 
                 # Show backend data
                 backend_data = result.get("details", {}).get("backend_data", {})
@@ -726,27 +772,33 @@ def display_final_results(
                         # Show detailed information if available
                         if evidence.get("details"):
                             details = evidence["details"]
-                            if details.get("endpoint_url"):
-                                st.write(
-                                    f"  📍 **Endpoint:** {details['endpoint_url']}"
-                                )
-                            if details.get("ip_address"):
-                                st.write(
-                                    f"  🌐 **IP Address:** {details['ip_address']}"
-                                )
-                            if details.get("ip_range"):
-                                st.write(f"  📊 **IP Range:** {details['ip_range']}")
-                            if details.get("network_name"):
-                                st.write(f"  🏷️ **Network:** {details['network_name']}")
-                            st.write("")  # Add spacing
+                            with st.expander(
+                                "🔍 Detailed Evidence Info", expanded=False
+                            ):
+                                if details.get("endpoint_url"):
+                                    st.write(
+                                        f"📍 **Endpoint:** `{details['endpoint_url']}`"
+                                    )
+                                if details.get("ip_address"):
+                                    st.write(
+                                        f"🌐 **IP Address:** `{details['ip_address']}`"
+                                    )
+                                if details.get("ip_range"):
+                                    st.write(
+                                        f"📊 **IP Range:** `{details['ip_range']}`"
+                                    )
+                                if details.get("network_name"):
+                                    st.write(
+                                        f"🏷️ **Network:** {details['network_name']}"
+                                    )
 
                 # Show all provider scores
                 if result.get("details", {}).get("provider_scores"):
-                    st.write("**All Provider Scores:**")
-                    scores = result["details"]["provider_scores"]
-                    for provider, score in scores.items():
-                        if score > 0:
-                            st.write(f"• {provider}: {score:.1f} points")
+                    with st.expander("📊 All Provider Scores", expanded=False):
+                        scores = result["details"]["provider_scores"]
+                        for provider, score in scores.items():
+                            if score > 0:
+                                st.write(f"• **{provider}**: {score:.1f} points")
 
             with col2:
                 # Summary info
@@ -757,7 +809,38 @@ def display_final_results(
                         st.write(f"• {ip}")
 
     # Original table for CSV download
-    st.dataframe(results_df, use_container_width=True, hide_index=True)
+    st.subheader("📋 Detailed Results Table")
+
+    # Enhanced CSS for better table readability
+    st.markdown(
+        """
+    <style>
+    .stDataFrame {
+        width: 100%;
+    }
+    .stDataFrame td {
+        white-space: pre-wrap !important;
+        word-wrap: break-word !important;
+        max-width: 300px !important;
+        vertical-align: top !important;
+        font-size: 0.9em;
+    }
+    .stDataFrame th {
+        white-space: nowrap !important;
+        font-weight: bold;
+        background-color: #f0f2f6;
+    }
+    .primary-reason-col {
+        max-width: 400px !important;
+    }
+    </style>
+    """,
+        unsafe_allow_html=True,
+    )
+
+    # Use st.table for better text wrapping of complex data
+    if results_df.empty == False:
+        st.table(results_df)
 
     # Download section
     st.subheader("💾 Download Results")
