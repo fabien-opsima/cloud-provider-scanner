@@ -574,29 +574,46 @@ def display_results(results: List[Dict], container):
             primary_reason = result.get("primary_reason", "No reason provided")
 
             # Color coding based on correctness and confidence
-            if confidence >= 70:
+            if (
+                result.get("correct", False) and confidence >= 40
+            ):  # Correct with reasonable confidence
                 card_color = "#d4f6d4"  # Light green
-                confidence_emoji = "🟢"
-            elif confidence >= 40:
-                card_color = "#fff4d4"  # Light yellow
-                confidence_emoji = "🟡"
+                status_emoji = "✅"
+                status_text = "CORRECT"
+                border_color = "#28a745"
+            elif (
+                result.get("correct", False)
+                and result["predicted_label"] == "Other"
+                and confidence < 40
+            ):  # "Other" match but low confidence
+                card_color = "#f0f0f0"  # Light grey - not enough info to be confident about "Other"
+                status_emoji = "⚫"
+                status_text = "LOW CONFIDENCE"
+                border_color = "#6c757d"
+            elif confidence < 30:  # Low confidence for any result
+                card_color = "#f0f0f0"  # Light grey
+                status_emoji = "⚫"
+                status_text = "LOW CONFIDENCE"
+                border_color = "#6c757d"
             else:
-                card_color = (
-                    "#f0f0f0"  # Light grey (instead of red - low confidence, not wrong)
-                )
-                confidence_emoji = "⚫"
+                card_color = "#f6d4d4"  # Light red for actual wrong predictions with decent confidence
+                status_emoji = "❌"
+                status_text = "WRONG"
+                border_color = "#dc3545"
 
-            # Provider emoji
-            if provider == "AWS":
-                provider_emoji = "🟧"
-            elif provider == "GCP":
-                provider_emoji = "🔵"
-            elif provider == "Azure":
-                provider_emoji = "🔷"
-            elif provider == "Error":
-                provider_emoji = "❌"
-            else:
-                provider_emoji = "⚫"
+            # Provider emojis
+            def get_provider_emoji(provider):
+                if provider == "AWS":
+                    return "🟧"
+                elif provider == "GCP":
+                    return "🔵"
+                elif provider == "Azure":
+                    return "🔷"
+                else:
+                    return "⚫"
+
+            true_emoji = get_provider_emoji(result["true_label"])
+            pred_emoji = get_provider_emoji(result["predicted_label"])
 
             # Create individual result card
             st.markdown(
@@ -605,12 +622,12 @@ def display_results(results: List[Dict], container):
                 background-color: {card_color};
                 padding: 20px;
                 border-radius: 10px;
-                border-left: 5px solid #007acc;
+                border-left: 5px solid {border_color};
                 margin: 10px 0;
                 box-shadow: 0 2px 4px rgba(0,0,0,0.1);
             ">
                 <h4 style="margin: 0 0 15px 0; color: #333;">
-                    {provider_emoji} <strong>{result["url"]}</strong> → {provider} {confidence_emoji} {confidence:.1f}%
+                    {status_emoji} <strong>{result["url"]}</strong> - {status_text}
                 </h4>
                 <div style="background-color: white; padding: 15px; border-radius: 5px; margin: 10px 0;">
                     <strong>🎯 Primary Reason:</strong><br>
@@ -1055,12 +1072,19 @@ def display_test_results_live(
             primary_reason = result.get("primary_reason", "No reason provided")
 
             # Color coding based on correctness and confidence
-            if is_correct:
+            if is_correct and confidence >= 40:  # Correct with reasonable confidence
                 card_color = "#d4f6d4"  # Light green
                 status_emoji = "✅"
                 status_text = "CORRECT"
                 border_color = "#28a745"
-            elif confidence < 30:  # Low confidence - use grey instead of red
+            elif (
+                is_correct and predicted_label == "Other" and confidence < 40
+            ):  # "Other" match but low confidence
+                card_color = "#f0f0f0"  # Light grey - not enough info to be confident about "Other"
+                status_emoji = "⚫"
+                status_text = "LOW CONFIDENCE"
+                border_color = "#6c757d"
+            elif confidence < 30:  # Low confidence for any result
                 card_color = "#f0f0f0"  # Light grey
                 status_emoji = "⚫"
                 status_text = "LOW CONFIDENCE"
@@ -1219,12 +1243,21 @@ def display_final_test_results(
         primary_reason = result.get("primary_reason", "No reason provided")
 
         # Color coding based on correctness and confidence
-        if is_correct:
+        if is_correct and confidence >= 40:  # Correct with reasonable confidence
             card_color = "#d4f6d4"  # Light green
             status_emoji = "✅"
             status_text = "CORRECT"
             border_color = "#28a745"
-        elif confidence < 30:  # Low confidence - use grey instead of red
+        elif (
+            is_correct and predicted_label == "Other" and confidence < 40
+        ):  # "Other" match but low confidence
+            card_color = (
+                "#f0f0f0"  # Light grey - not enough info to be confident about "Other"
+            )
+            status_emoji = "⚫"
+            status_text = "LOW CONFIDENCE"
+            border_color = "#6c757d"
+        elif confidence < 30:  # Low confidence for any result
             card_color = "#f0f0f0"  # Light grey
             status_emoji = "⚫"
             status_text = "LOW CONFIDENCE"
@@ -1234,6 +1267,17 @@ def display_final_test_results(
             status_emoji = "❌"
             status_text = "WRONG"
             border_color = "#dc3545"
+
+        # Provider emojis
+        def get_provider_emoji(provider):
+            if provider == "AWS":
+                return "🟧"
+            elif provider == "GCP":
+                return "🔵"
+            elif provider == "Azure":
+                return "🔷"
+            else:
+                return "⚫"
 
         true_emoji = get_provider_emoji(true_label)
         pred_emoji = get_provider_emoji(predicted_label)
@@ -1253,14 +1297,7 @@ def display_final_test_results(
                 {status_emoji} <strong>{domain}</strong> - {status_text}
             </h4>
             <div style="margin-bottom: 10px; font-size: 16px;">
-                <strong>Expected:</strong> {true_emoji} {true_label} | 
-                <strong>Predicted:</strong> {pred_emoji} {predicted_label} ({confidence:.1f}%)
-            </div>
-            <div style="background-color: white; padding: 15px; border-radius: 5px; margin: 10px 0;">
-                <strong>🎯 Primary Reason:</strong><br>
-                <span style="font-family: monospace; font-size: 14px; line-height: 1.5; word-wrap: break-word;">
-                    {primary_reason}
-                </span>
+                <strong>Reason:</strong> {primary_reason}
             </div>
         </div>
         """,
