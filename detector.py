@@ -871,6 +871,10 @@ class CloudProviderDetector:
             # Load test data
             df = pd.read_csv(test_file_path)
 
+            # Shuffle the test data to ensure random order each time
+            df = df.sample(frac=1).reset_index(drop=True)
+            print(f"Shuffled {len(df)} test domains for random order")
+
             # Run analysis on test domains
             predictions = []
             true_labels = []

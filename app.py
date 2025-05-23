@@ -376,6 +376,11 @@ def run_accuracy_test(headless_mode: bool):
 
         # Load test data to show progress
         test_df = pd.read_csv("data/test.csv")
+
+        # Shuffle the test data to ensure random order each time
+        test_df = test_df.sample(frac=1).reset_index(drop=True)
+        print(f"🔀 Shuffled {len(test_df)} test domains for random order")
+
         total_domains = len(test_df)
 
         status_text.text(f"🧪 Testing {total_domains} domains...")
