@@ -137,6 +137,64 @@ class CloudProviderDetector:
             }
         )
 
+        # Advertising and marketing services blacklist - these are third-party services, not backend hosting
+        self.advertising_blacklist = {
+            # Google Ads and Marketing
+            "doubleclick.net",
+            "googleadservices.com",
+            "googlesyndication.com",
+            "googletagmanager.com",
+            "googletagservices.com",
+            "jnn-pa.googleapis.com",  # Google advertising service
+            "google-analytics.com",
+            "googleanalytics.com",
+            "analytics.google.com",
+            "pagead2.googlesyndication.com",
+            "tpc.googlesyndication.com",
+            "googleads.g.doubleclick.net",
+            # Facebook/Meta Ads
+            "facebook.com",
+            "connect.facebook.net",
+            "facebook.net",
+            "connect.facebook.com",
+            # Amazon Advertising
+            "amazon-adsystem.com",
+            "amazonclouddrive.com",
+            # Microsoft Advertising
+            "bat.bing.com",
+            "ads.microsoft.com",
+            "c.bing.com",
+            # Twitter/X Ads
+            "ads-twitter.com",
+            "analytics.twitter.com",
+            "ads.x.com",
+            # LinkedIn Ads
+            "ads.linkedin.com",
+            "analytics.pointdrive.linkedin.com",
+            # Other common advertising/analytics services
+            "hotjar.com",
+            "mixpanel.com",
+            "segment.com",
+            "amplitude.com",
+            "fullstory.com",
+            "loggly.com",
+            "newrelic.com",
+            "sentry.io",
+            "bugsnag.com",
+            "rollbar.com",
+            "intercom.io",
+            "zendesk.com",
+            "freshworks.com",
+            "crisp.chat",
+            "drift.com",
+            "hubspot.com",
+            "marketo.com",
+            "pardot.com",
+            "mailchimp.com",
+            "sendgrid.com",
+            "twilio.com",
+        }
+
         # Cloud provider patterns for header and asset analysis
         self.cloud_patterns = {
             "AWS": {
@@ -232,6 +290,23 @@ class CloudProviderDetector:
             print(f"Failed to load Azure IP ranges: {e}")
             self.ip_ranges["Azure"] = []
 
+    def is_advertising_service(self, domain: str) -> bool:
+        """Check if a domain is an advertising/marketing service that should be excluded."""
+        domain_lower = domain.lower()
+
+        # Check exact matches
+        if domain_lower in self.advertising_blacklist:
+            return True
+
+        # Check if domain ends with any blacklisted domain (for subdomains)
+        for blacklisted_domain in self.advertising_blacklist:
+            if domain_lower.endswith(f".{blacklisted_domain}") or domain_lower.endswith(
+                blacklisted_domain
+            ):
+                return True
+
+        return False
+
     def resolve_domain_to_ips(self, domain: str) -> List[str]:
         """Resolve domain to IP addresses with robust error handling."""
         ips = []
@@ -325,6 +400,15 @@ class CloudProviderDetector:
                         # Only track XHR/fetch requests (API calls)
                         resource_type = request.resource_type
                         if resource_type in ["xhr", "fetch"]:
+                            # Skip advertising and marketing services - these are third-party, not backend hosting
+                            if request_domain and self.is_advertising_service(
+                                request_domain
+                            ):
+                                print(
+                                    f"  🚫 Skipping advertising service: {request_domain}"
+                                )
+                                return
+
                             # Check if it's a same-domain API endpoint
                             if request_domain and base_domain in request_domain:
                                 xhr_calls.add(request_domain)
@@ -350,7 +434,7 @@ class CloudProviderDetector:
                                     print(
                                         f"  ☁️ XHR to AWS {service_type}: {request_domain}"
                                     )
-                                # Check for GCP services (excluding Maps API)
+                                # Check for GCP services (excluding Maps API and advertising)
                                 elif any(
                                     pattern in request_domain.lower()
                                     for pattern in [
