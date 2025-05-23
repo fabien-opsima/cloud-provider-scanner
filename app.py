@@ -215,7 +215,7 @@ def analyze_domains_interface(uploaded_file, domain_column, headless_mode):
     with col2:
         st.subheader("ℹ️ About")
         st.markdown("""
-        This tool analyzes domains to detect which cloud provider hosts them:
+        This tool analyzes domains to detect which cloud provider hosts their **backend API infrastructure** by exploring app subdomains and XHR calls:
         
         **Supported Providers:**
         - 🟧 AWS (Amazon Web Services)
@@ -223,20 +223,25 @@ def analyze_domains_interface(uploaded_file, domain_column, headless_mode):
         - 🔷 Azure (Microsoft Azure)
         - ⚫ Other providers
         
-        **Detection Methods:**
-        - 🎯 **IP Range Analysis** (Primary - 60 pts)
-          Based on official cloud provider IP ranges
-        - 🔍 **Backend Endpoint Discovery** (40 pts)
-          When browsers available
-        - 🛡️ **Security Headers** (30 pts)
-        - 📦 **Cloud Assets & CDN** (60 pts max)
-          When browsers available
+        **XHR-Focused Detection Methods:**
+        - 🎯 **XHR API Endpoint IPs** (80 pts) 
+          IP analysis of XHR/fetch requests from app subdomains
+        - ☁️ **Direct Cloud XHR Calls** (60 pts)
+          XHR requests directly to *.amazonaws.com, *.googleapis.com etc.
+        - 🛡️ **XHR API Headers** (40 pts)
+          Headers from actual API endpoints making XHR calls
         
-        **Robust Design:**
-        - ✅ Works with or without browser dependencies
-        - 🎯 IP analysis alone provides reliable detection
-        - ⚡ Faster performance in IP-only mode
-        - 🌐 Focus on backend hosting (not CDN layer)
+        **App Subdomain Exploration:**
+        - 🔍 Automatically discovers app.domain.com, dashboard.domain.com etc.
+        - 📱 Navigates to Single Page Applications (SPAs)
+        - 🔄 Interacts with pages to trigger API calls
+        - 🎪 Focuses on actual backend infrastructure, not website hosting
+        
+        **Why XHR-Only?**
+        - ✅ Ignores website hosting platforms completely
+        - 🎯 Only analyzes actual backend API calls
+        - 📊 More accurate for business intelligence
+        - 🚀 Focuses on app subdomains where real applications live
         """)
 
 
@@ -602,6 +607,17 @@ def display_final_results(
             evidence_methods = [e["method"] for e in result["evidence"]]
             evidence_summary = ", ".join(set(evidence_methods))
 
+        # Get backend API info
+        backend_data = result.get("details", {}).get("backend_data", {})
+        xhr_apis = ", ".join(backend_data.get("xhr_api_calls", []))
+        app_subdomains = ", ".join(backend_data.get("app_subdomains", []))
+        cloud_domains = ", ".join(
+            [
+                d[0] if isinstance(d, tuple) else str(d)
+                for d in backend_data.get("cloud_provider_domains", [])
+            ]
+        )
+
         final_data.append(
             {
                 "Domain": result["url"],
@@ -609,12 +625,9 @@ def display_final_results(
                 "Confidence Score": f"{result['confidence_score']:.1f}%",
                 "Primary Reason": result.get("primary_reason", "No reason provided"),
                 "Evidence Methods": evidence_summary,
-                "Main IPs": ", ".join(
-                    result.get("details", {}).get("main_domain_ips", [])
-                ),
-                "Backend IPs": ", ".join(
-                    result.get("details", {}).get("backend_ips", [])
-                ),
+                "XHR API Calls": xhr_apis if xhr_apis else "None detected",
+                "App Subdomains": app_subdomains if app_subdomains else "None detected",
+                "Cloud XHR Calls": cloud_domains if cloud_domains else "None detected",
                 "Error": result.get("details", {}).get("error", ""),
             }
         )
@@ -626,6 +639,7 @@ def display_final_results(
     providers = {}
     high_confidence = 0
     errors = 0
+    api_detected = 0
 
     for result in results:
         provider = result["primary_cloud_provider"]
@@ -634,6 +648,12 @@ def display_final_results(
             high_confidence += 1
         if provider == "Error":
             errors += 1
+        # Count domains where API endpoints were detected
+        backend_data = result.get("details", {}).get("backend_data", {})
+        if backend_data.get("xhr_api_calls") or backend_data.get(
+            "cloud_provider_domains"
+        ):
+            api_detected += 1
 
     # Display summary metrics
     col1, col2, col3, col4 = st.columns(4)
@@ -646,9 +666,8 @@ def display_final_results(
         confidence_rate = (high_confidence / total * 100) if total > 0 else 0
         st.metric("High Confidence", f"{confidence_rate:.1f}%")
     with col4:
-        st.metric(
-            "Unique Providers", len([p for p in providers.keys() if p != "Error"])
-        )
+        api_rate = (api_detected / total * 100) if total > 0 else 0
+        st.metric("API Endpoints Found", f"{api_rate:.1f}%")
 
     # Provider distribution chart
     if providers:
@@ -659,7 +678,7 @@ def display_final_results(
         st.bar_chart(provider_df.set_index("Provider"))
 
     # Detailed results table
-    st.subheader("📋 Complete Results with Reasoning")
+    st.subheader("📋 Complete Results with Backend Analysis")
 
     # Add expandable details for each domain
     for i, result in enumerate(results):
@@ -672,6 +691,22 @@ def display_final_results(
                 st.write(
                     f"**Primary Reason:** {result.get('primary_reason', 'No reason provided')}"
                 )
+
+                # Show backend data
+                backend_data = result.get("details", {}).get("backend_data", {})
+                if backend_data.get("xhr_api_calls"):
+                    st.write("**🎯 XHR API Calls:**")
+                    for api in backend_data["xhr_api_calls"]:
+                        st.write(f"• {api}")
+
+                if backend_data.get("cloud_provider_domains"):
+                    st.write("**☁️ Direct Cloud Provider Calls:**")
+                    for domain_info in backend_data["cloud_provider_domains"]:
+                        if isinstance(domain_info, tuple):
+                            domain, provider = domain_info
+                            st.write(f"• {domain} ({provider})")
+                        else:
+                            st.write(f"• {domain_info}")
 
                 # Show evidence details
                 if result.get("evidence"):
@@ -713,15 +748,15 @@ def display_final_results(
     # Summary CSV (simplified)
     summary_data = []
     for result in results:
+        backend_data = result.get("details", {}).get("backend_data", {})
         summary_data.append(
             {
                 "Domain": result["url"],
                 "Cloud Provider": result["primary_cloud_provider"],
                 "Confidence": f"{result['confidence_score']:.1f}%",
                 "Primary Reason": result.get("primary_reason", "No reason provided"),
-                "Main IP": result.get("details", {}).get("main_domain_ips", [""])[0]
-                if result.get("details", {}).get("main_domain_ips")
-                else "",
+                "API Calls": len(backend_data.get("xhr_api_calls", [])),
+                "Cloud Calls": len(backend_data.get("cloud_provider_domains", [])),
             }
         )
 
@@ -737,7 +772,7 @@ def display_final_results(
             data=detailed_csv,
             file_name=detailed_filename,
             mime="text/csv",
-            help="Complete analysis data with IPs, scores, reasoning, and errors",
+            help="Complete analysis data with API calls, cloud calls, and reasoning",
             type="primary",
         )
 
@@ -747,27 +782,28 @@ def display_final_results(
             data=summary_csv,
             file_name=summary_filename,
             mime="text/csv",
-            help="Simplified domain → provider mapping with reasoning",
+            help="Simplified results with API call and cloud call counts",
         )
 
     # Analysis summary info
     st.info(f"""
-    📊 **Analysis Complete!**
+    📊 **Backend Analysis Complete!**
     
     ✅ **{total} domains analyzed**
     🎯 **{success_rate:.1f}% success rate**
     📈 **{high_confidence} high-confidence detections** (≥70%)
+    🔍 **{api_detected} domains with API calls detected** ({api_rate:.1f}%)
     ⚡ **{len([p for p in providers.keys() if p != "Error"])} unique providers found**
-    🔍 **Detailed reasoning provided for each detection**
     
     💡 Use the download buttons above to save your results!
     """)
 
     # Print summary to console/logs
-    print("\n🎉 ANALYSIS COMPLETE!")
+    print("\n🎉 BACKEND ANALYSIS COMPLETE!")
     print(f"📊 Total domains analyzed: {total}")
     print(f"✅ Success rate: {success_rate:.1f}%")
     print(f"🎯 High confidence detections: {high_confidence}")
+    print(f"🔍 API calls detected: {api_detected} domains")
     print("☁️ Provider breakdown:")
     for provider, count in providers.items():
         if provider != "Error":

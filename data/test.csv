@@ -6,28 +6,28 @@ record_id,domain,name,cloud_provider
 30096271957,lecab.fr,LeCab,Other
 30079934572,corpogames.fr,corpogames.fr,Other
 28510009712,www.getscalability.io,Scalability,Snowflake
-33678686761,ecedi.fr,Ecedi,OVH
-33681164347,fraudbuster.mobi,FraudBuster,OVH
-33682712440,edenwork.com,Edenwork,OVH
-33705082236,blic.pro,BLIC,OVH
-33654182689,edumiam.com,Edumiam,OVH
-33676025738,jacquetmetals.com,Jacquet Metals,OVH
-33496734583,bnbchain.org,BNB Chain,OVH
-33505591389,parz.co,PARZ,OVH
-33491438991,custplace.com,Custplace,OVH
-33507263776,prolong.io,prolong.io,OVH
-33493320323,imanaging-document.fr,Imanaging-document,OVH
-33503361817,facilitech.fr,Facilitech,OVH
-33501348769,sportyneo.com,SPORTYNEO,OVH
-33498128185,banket.fr,Banket,OVH
-33479135021,wetransform.com,WeTransform,OVH
-33497818445,snowleopardspm.com,Snowleopard SPM,OVH
-33497353899,pepsup.com,Pep's Up,OVH
-33495952545,kheoos.com,kheoos,OVH
-33226189971,forms.gle,KENTIGO,OVH
-29843519915,arkose.com,Arkose,OVH
-29671720281,getmatcha.tech,Matcha,OVH
-29496097828,isupplier.fr,iSupplier,OVH
+33678686761,ecedi.fr,Ecedi,Other
+33681164347,fraudbuster.mobi,FraudBuster,Other
+33682712440,edenwork.com,Edenwork,Other
+33705082236,blic.pro,BLIC,Other
+33654182689,edumiam.com,Edumiam,Other
+33676025738,jacquetmetals.com,Jacquet Metals,Other
+33496734583,bnbchain.org,BNB Chain,Other
+33505591389,parz.co,PARZ,Other
+33491438991,custplace.com,Custplace,Other
+33507263776,prolong.io,prolong.io,Other
+33493320323,imanaging-document.fr,Imanaging-document,Other
+33503361817,facilitech.fr,Facilitech,Other
+33501348769,sportyneo.com,SPORTYNEO,Other
+33498128185,banket.fr,Banket,Other
+33479135021,wetransform.com,WeTransform,Other
+33497818445,snowleopardspm.com,Snowleopard SPM,Other
+33497353899,pepsup.com,Pep's Up,Other
+33495952545,kheoos.com,kheoos,Other
+33226189971,forms.gle,KENTIGO,Other
+29843519915,arkose.com,Arkose,Other
+29671720281,getmatcha.tech,Matcha,Other
+29496097828,isupplier.fr,iSupplier,Other
 33506520446,excense.fr,Excense,Azure
 33499211938,dastra.eu,DASTRA,Azure
 33005534876,groupe-pomona.fr,Groupe Pomona,Azure
