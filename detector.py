@@ -434,7 +434,7 @@ class CloudProviderDetector:
                                     print(
                                         f"  ☁️ XHR to AWS {service_type}: {request_domain}"
                                     )
-                                # Check for GCP services (excluding Maps API and advertising)
+                                # Check for GCP services (excluding Maps API, Fonts API, and advertising)
                                 elif any(
                                     pattern in request_domain.lower()
                                     for pattern in [
@@ -443,13 +443,14 @@ class CloudProviderDetector:
                                         ".run.app",
                                     ]
                                 ):
-                                    # Exclude Google Maps API calls as they're third-party services, not backend hosting
+                                    # Exclude Google Maps API, Fonts API, and advertising calls as they're third-party services, not backend hosting
                                     if not any(
-                                        maps_pattern in request_domain.lower()
-                                        for maps_pattern in [
+                                        excluded_pattern in request_domain.lower()
+                                        for excluded_pattern in [
                                             "maps.googleapis.com",
                                             "mapsplatform.googleapis.com",
                                             "maps.gstatic.com",
+                                            "fonts.googleapis.com",
                                         ]
                                     ):
                                         service_type = self._identify_gcp_service(
@@ -462,9 +463,17 @@ class CloudProviderDetector:
                                             f"  ☁️ XHR to GCP {service_type}: {request_domain}"
                                         )
                                     else:
-                                        print(
-                                            f"  🗺️ Skipping Google Maps API: {request_domain}"
-                                        )
+                                        if (
+                                            "fonts.googleapis.com"
+                                            in request_domain.lower()
+                                        ):
+                                            print(
+                                                f"  🔤 Skipping Google Fonts API: {request_domain}"
+                                            )
+                                        else:
+                                            print(
+                                                f"  🗺️ Skipping Google Maps API: {request_domain}"
+                                            )
                                 # Check for Azure services
                                 elif any(
                                     pattern in request_domain.lower()
