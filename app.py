@@ -345,12 +345,11 @@ def process_domains(df: pd.DataFrame, domain_column: str, headless_mode: bool):
 
                     # Print result to console for real-time feedback
                     provider = result["primary_cloud_provider"]
-                    confidence = result["confidence_score"]
-                    print(f"✅ {url} → {provider} ({confidence:.1f}%)")
+                    print(f"✅ {url} → {provider}")
 
                     # Update status with result
                     status_text.text(
-                        f"✅ {i + 1}/{len(urls)} complete: {url} → {provider} ({confidence:.1f}%)"
+                        f"✅ {i + 1}/{len(urls)} complete: {url} → {provider}"
                     )
 
                     # Update results display in real-time
@@ -365,7 +364,6 @@ def process_domains(df: pd.DataFrame, domain_column: str, headless_mode: bool):
                         {
                             "url": url,
                             "primary_cloud_provider": "Error",
-                            "confidence_score": 0,
                             "details": {"error": str(e)},
                         }
                     )
@@ -440,7 +438,6 @@ def run_accuracy_test(headless_mode: bool):
                 # Run analysis
                 result = asyncio.run(detector.analyze_website(domain))
                 predicted_label = result["primary_cloud_provider"]
-                confidence = result["confidence_score"]
                 primary_reason = result.get("primary_reason", "No reason provided")
 
                 # Create test result object
@@ -448,7 +445,6 @@ def run_accuracy_test(headless_mode: bool):
                     "domain": domain,
                     "true_label": true_label,
                     "predicted_label": predicted_label,
-                    "confidence": confidence,
                     "primary_reason": primary_reason,
                     "correct": predicted_label == true_label,
                     "is_insufficient_data": predicted_label == "Insufficient Data",
@@ -502,18 +498,18 @@ def run_accuracy_test(headless_mode: bool):
                     # Print result to console for real-time feedback
                     correct_emoji = "✅" if is_correct else "❌"
                     print(
-                        f"{correct_emoji} {domain} → True: {true_label}, Predicted: {predicted_label} ({confidence:.1f}%) {'CORRECT' if is_correct else 'WRONG'}"
+                        f"{correct_emoji} {domain} → True: {true_label}, Predicted: {predicted_label} {'CORRECT' if is_correct else 'WRONG'}"
                     )
                     print(f"   Reason: {primary_reason}")
 
                     # Show immediate result with prominent display
                     if is_correct:
                         current_result_placeholder.success(
-                            f"✅ **CORRECT!** `{domain}` → True: {true_label}, Predicted: {predicted_label} ({confidence:.1f}%)\n\n💡 **Reason:** {primary_reason}"
+                            f"✅ **CORRECT!** `{domain}` → True: {true_label}, Predicted: {predicted_label}\n\n💡 **Reason:** {primary_reason}"
                         )
                     else:
                         current_result_placeholder.error(
-                            f"❌ **WRONG!** `{domain}` → True: {true_label}, Predicted: {predicted_label} ({confidence:.1f}%)\n\n💡 **Reason:** {primary_reason}"
+                            f"❌ **WRONG!** `{domain}` → True: {true_label}, Predicted: {predicted_label}\n\n💡 **Reason:** {primary_reason}"
                         )
 
                     # Update status with result
@@ -558,7 +554,6 @@ def run_accuracy_test(headless_mode: bool):
                     "domain": domain,
                     "true_label": true_label,
                     "predicted_label": "Error",
-                    "confidence": 0,
                     "primary_reason": f"Analysis failed: {error_msg}",
                     "correct": False,
                 }
@@ -659,26 +654,25 @@ def display_results(results: List[Dict], container):
         # Summary metrics first
         total = len(results)
         providers = {}
-        high_confidence = 0
+        correct_count = 0
         total_confidence = 0
 
         for result in results:
             provider = result.get("primary_cloud_provider", "Unknown")
-            confidence = result.get("confidence_score", 0)
             providers[provider] = providers.get(provider, 0) + 1
-            total_confidence += confidence
-            if confidence >= 70:
-                high_confidence += 1
+            if result.get("correct", False):
+                correct_count += 1
 
-        avg_confidence = total_confidence / total if total > 0 else 0
+        # Calculate percentage of correct predictions instead of confidence
+        accuracy_percent = (correct_count / total * 100) if total > 0 else 0
 
         col1, col2, col3, col4 = st.columns(4)
         with col1:
             st.metric("Analyzed", total)
         with col2:
-            st.metric("Avg Confidence", f"{avg_confidence:.1f}%")
+            st.metric("Accuracy", f"{accuracy_percent:.1f}%")
         with col3:
-            st.metric("High Confidence", f"{high_confidence}")
+            st.metric("Correct", f"{correct_count}")
         with col4:
             st.metric(
                 "Providers Found", len([p for p in providers.keys() if p != "Error"])
@@ -689,36 +683,19 @@ def display_results(results: List[Dict], container):
 
         for i, result in enumerate(results):
             provider = result.get("primary_cloud_provider", "Unknown")
-            confidence = result.get("confidence_score", 0)
             primary_reason = result.get("primary_reason", "No reason provided")
 
-            # Color coding based on correctness and confidence
+            # Enhanced color coding to handle "Insufficient Data" and fix the red error bug
             if provider == "Insufficient Data":
                 card_color = "#e8f4fd"  # Light blue for insufficient data
                 status_emoji = "🔍"
                 status_text = "INSUFFICIENT DATA"
                 border_color = "#17a2b8"
-            elif (
-                result.get("correct", False) and confidence >= 40
-            ):  # Correct with reasonable confidence
+            elif result["correct"]:
                 card_color = "#d4f6d4"  # Light green
                 status_emoji = "✅"
                 status_text = "CORRECT"
                 border_color = "#28a745"
-            elif (
-                result.get("correct", False)
-                and result["predicted_label"] == "Other"
-                and confidence < 40
-            ):  # "Other" match but low confidence
-                card_color = "#f0f0f0"  # Light grey - not enough info to be confident about "Other"
-                status_emoji = "⚫"
-                status_text = "LOW CONFIDENCE"
-                border_color = "#6c757d"
-            elif confidence < 30:  # Low confidence for any result
-                card_color = "#f0f0f0"  # Light grey
-                status_emoji = "⚫"
-                status_text = "LOW CONFIDENCE"
-                border_color = "#6c757d"
             else:
                 card_color = "#f6d4d4"  # Light red for actual wrong predictions with decent confidence
                 status_emoji = "❌"
@@ -832,7 +809,7 @@ def display_results(results: List[Dict], container):
 
                 with col2:
                     # Summary info
-                    st.metric("Confidence Score", f"{confidence:.1f}%")
+                    st.write("**📊 Analysis Details**")
 
                     # All provider scores
                     if result.get("details", {}).get("provider_scores"):
@@ -888,7 +865,6 @@ def display_final_results(
             {
                 "Domain": result["url"],
                 "Cloud Provider": result["primary_cloud_provider"],
-                "Confidence Score": f"{result['confidence_score']:.1f}%",
                 "Primary Reason": primary_reason,
                 "Evidence Methods": evidence_summary,
                 "XHR API Calls": xhr_apis if xhr_apis else "None detected",
@@ -903,15 +879,15 @@ def display_final_results(
     # Summary statistics
     total = len(results)
     providers = {}
-    high_confidence = 0
+    correct_count = 0
     errors = 0
     api_detected = 0
 
     for result in results:
         provider = result["primary_cloud_provider"]
         providers[provider] = providers.get(provider, 0) + 1
-        if result["confidence_score"] >= 70:
-            high_confidence += 1
+        if result.get("correct", False):
+            correct_count += 1
         if provider == "Error":
             errors += 1
         # Count domains where API endpoints were detected
@@ -921,6 +897,9 @@ def display_final_results(
         ):
             api_detected += 1
 
+    # Calculate percentage of correct predictions
+    accuracy_percent = (correct_count / total * 100) if total > 0 else 0
+
     # Display summary metrics
     col1, col2, col3, col4 = st.columns(4)
     with col1:
@@ -929,7 +908,7 @@ def display_final_results(
         success_rate = ((total - errors) / total * 100) if total > 0 else 0
         st.metric("Success Rate", f"{success_rate:.1f}%")
     with col3:
-        confidence_rate = (high_confidence / total * 100) if total > 0 else 0
+        confidence_rate = (correct_count / total * 100) if total > 0 else 0
         st.metric("High Confidence", f"{confidence_rate:.1f}%")
     with col4:
         api_rate = (api_detected / total * 100) if total > 0 else 0
@@ -948,9 +927,7 @@ def display_final_results(
 
     # Add expandable details for each domain
     for i, result in enumerate(results):
-        with st.expander(
-            f"🔍 {result['url']} → {result['primary_cloud_provider']} ({result['confidence_score']:.1f}%)"
-        ):
+        with st.expander(f"🔍 {result['url']} → {result['primary_cloud_provider']}"):
             col1, col2 = st.columns([2, 1])
 
             with col1:
@@ -1021,7 +998,7 @@ def display_final_results(
 
             with col2:
                 # Summary info
-                st.metric("Confidence", f"{result['confidence_score']:.1f}%")
+                st.metric("Confidence", f"{accuracy_percent:.1f}%")
                 if result.get("details", {}).get("main_domain_ips"):
                     st.write("**Main IPs:**")
                     for ip in result["details"]["main_domain_ips"][:3]:  # Show first 3
@@ -1079,7 +1056,6 @@ def display_final_results(
             {
                 "Domain": result["url"],
                 "Cloud Provider": result["primary_cloud_provider"],
-                "Confidence": f"{result['confidence_score']:.1f}%",
                 "Primary Reason": result.get("primary_reason", "No reason provided"),
                 "API Calls": len(backend_data.get("xhr_api_calls", [])),
                 "Cloud Calls": len(backend_data.get("cloud_provider_domains", [])),
@@ -1117,7 +1093,7 @@ def display_final_results(
     
     ✅ **{total} domains analyzed**
     🎯 **{success_rate:.1f}% success rate**
-    📈 **{high_confidence} high-confidence detections** (≥70%)
+    📈 **{correct_count} high-confidence detections** (≥70%)
     🔍 **{api_detected} domains with API calls detected** ({api_rate:.1f}%)
     ⚡ **{len([p for p in providers.keys() if p != "Error"])} unique providers found**
     
@@ -1128,7 +1104,7 @@ def display_final_results(
     print("\n🎉 BACKEND ANALYSIS COMPLETE!")
     print(f"📊 Total domains analyzed: {total}")
     print(f"✅ Success rate: {success_rate:.1f}%")
-    print(f"🎯 High confidence detections: {high_confidence}")
+    print(f"🎯 High confidence detections: {correct_count}")
     print(f"🔍 API calls detected: {api_detected} domains")
     print("☁️ Provider breakdown:")
     for provider, count in providers.items():
@@ -1220,7 +1196,6 @@ def display_test_results_live(
             domain = result["domain"]
             true_label = result["true_label"]
             predicted_label = result["predicted_label"]
-            confidence = result.get("confidence", 0)
             primary_reason = result.get("primary_reason", "No reason provided")
 
             # Enhanced color coding to handle "Insufficient Data" and fix the red error bug
@@ -1235,23 +1210,14 @@ def display_test_results_live(
                 status_emoji = "🔍"
                 status_text = "INSUFFICIENT DATA"
                 border_color = "#17a2b8"
-            elif is_correct and confidence >= 40:  # Correct with reasonable confidence
+            elif is_correct:
+                # Correct predictions
                 card_color = "#d4f6d4"  # Light green
                 status_emoji = "✅"
                 status_text = "CORRECT"
                 border_color = "#28a745"
-            elif is_correct and confidence < 40:  # Correct but low confidence
-                card_color = "#fff3cd"  # Light yellow for correct but low confidence
-                status_emoji = "✅"
-                status_text = "CORRECT (LOW CONFIDENCE)"
-                border_color = "#ffc107"
-            elif confidence < 30:  # Wrong and low confidence
-                card_color = "#f0f0f0"  # Light grey
-                status_emoji = "⚫"
-                status_text = "WRONG (LOW CONFIDENCE)"
-                border_color = "#6c757d"
             else:
-                # Wrong with decent confidence
+                # Wrong predictions
                 card_color = "#f6d4d4"  # Light red for wrong predictions
                 status_emoji = "❌"
                 status_text = "WRONG"
@@ -1315,7 +1281,7 @@ def display_test_results_live(
                     </div>
                     <div style="margin-bottom: 5px;">
                         <strong>Expected:</strong> {true_emoji} {true_label} | 
-                        <strong>Predicted:</strong> {pred_emoji} {predicted_label} ({confidence:.1f}%)
+                        <strong>Predicted:</strong> {pred_emoji} {predicted_label}
                     </div>
                     <div style="background-color: white; padding: 10px; border-radius: 4px; font-family: monospace; font-size: 12px;">
                         <strong>Reason:</strong> {primary_reason}
@@ -1473,7 +1439,6 @@ def display_final_test_results(test_metrics: dict, results: List[Dict]):
         domain = result["domain"]
         true_label = result["true_label"]
         predicted_label = result["predicted_label"]
-        confidence = result.get("confidence", 0)
         primary_reason = result.get("primary_reason", "No reason provided")
 
         # Enhanced color coding to handle "Insufficient Data" and fix the red error bug
@@ -1488,23 +1453,14 @@ def display_final_test_results(test_metrics: dict, results: List[Dict]):
             status_emoji = "🔍"
             status_text = "INSUFFICIENT DATA"
             border_color = "#17a2b8"
-        elif is_correct and confidence >= 40:  # Correct with reasonable confidence
+        elif is_correct:
+            # Correct predictions
             card_color = "#d4f6d4"  # Light green
             status_emoji = "✅"
             status_text = "CORRECT"
             border_color = "#28a745"
-        elif is_correct and confidence < 40:  # Correct but low confidence
-            card_color = "#fff3cd"  # Light yellow for correct but low confidence
-            status_emoji = "✅"
-            status_text = "CORRECT (LOW CONFIDENCE)"
-            border_color = "#ffc107"
-        elif confidence < 30:  # Wrong and low confidence
-            card_color = "#f0f0f0"  # Light grey
-            status_emoji = "⚫"
-            status_text = "WRONG (LOW CONFIDENCE)"
-            border_color = "#6c757d"
         else:
-            # Wrong with decent confidence
+            # Wrong predictions
             card_color = "#f6d4d4"  # Light red for wrong predictions
             status_emoji = "❌"
             status_text = "WRONG"

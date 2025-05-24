@@ -724,7 +724,6 @@ class CloudProviderDetector:
                                 "method": "XHR API Endpoint",
                                 "provider": provider,
                                 "evidence": f"XHR API {api_domain} (IP {ip}) matches {provider} range {ip_info['range']}",
-                                "confidence_points": 80,
                                 "details": {
                                     "endpoint_url": api_domain,
                                     "ip_address": ip,
@@ -758,7 +757,6 @@ class CloudProviderDetector:
                                 "method": "Direct Cloud XHR Call",
                                 "provider": provider,
                                 "evidence": f"XHR calls directly to {cloud_domain} ({service_type})",
-                                "confidence_points": 60,
                                 "details": {
                                     "cloud_domain": cloud_domain,
                                     "service_type": service_type,
@@ -794,7 +792,6 @@ class CloudProviderDetector:
                                 "method": "XHR API Headers",
                                 "provider": provider,
                                 "evidence": header_details,
-                                "confidence_points": 40,
                                 "details": {
                                     "endpoint_url": endpoint,
                                     "headers_found": headers,
@@ -820,7 +817,6 @@ class CloudProviderDetector:
                                     "method": "XHR API Headers",
                                     "provider": provider,
                                     "evidence": f"Found {provider}-specific headers in XHR API endpoints",
-                                    "confidence_points": score,
                                 }
                             )
 
@@ -829,15 +825,8 @@ class CloudProviderDetector:
                 primary_provider = max(provider_scores, key=provider_scores.get)
                 max_score = provider_scores[primary_provider]
 
-                # Calculate confidence score (normalized to 0-100)
-                # New total possible score: 80 (XHR API IP) + 60 (cloud XHR calls) + 40 (XHR headers) = 180
-                total_possible_score = 180.0
-                confidence_score = min((max_score / total_possible_score) * 100, 100)
-
-                # Classification logic with better confidence thresholds
-                if (
-                    confidence_score >= 40
-                ):  # High confidence threshold for cloud provider detection
+                # Simple classification: if we have any evidence, use the highest scoring provider
+                if max_score > 0:
                     result["primary_cloud_provider"] = primary_provider
 
                     # Determine primary reason based on evidence
@@ -848,39 +837,19 @@ class CloudProviderDetector:
                     result["evidence"] = [
                         e for e in evidence_list if e["provider"] == primary_provider
                     ]
-
-                elif (
-                    confidence_score >= 20
-                ):  # Medium confidence - could be the provider but not certain
-                    result["primary_cloud_provider"] = primary_provider
-
-                    # Determine primary reason based on evidence
-                    primary_reason, main_evidence = self._determine_primary_reason_xhr(
-                        evidence_list, primary_provider, backend_match, backend_data
-                    )
-                    result["primary_reason"] = (
-                        f"Low confidence detection: {primary_reason}"
-                    )
-                    result["evidence"] = [
-                        e for e in evidence_list if e["provider"] == primary_provider
-                    ]
-
                 else:
-                    # Not enough evidence to classify - use "Insufficient Data" instead of "Other"
+                    # No evidence found at all
                     result["primary_cloud_provider"] = "Insufficient Data"
                     result["primary_reason"] = (
-                        f"Very low confidence ({confidence_score:.1f}%) - insufficient XHR API evidence for classification"
+                        "No XHR API evidence found for classification"
                     )
 
-                result["confidence_score"] = confidence_score
                 result["details"]["provider_scores"] = provider_scores
                 result["details"]["all_evidence"] = evidence_list
 
                 # Summary stats
                 classified_as = result["primary_cloud_provider"]
-                print(
-                    f"  📊 Analysis complete: {classified_as} ({confidence_score:.1f}% confidence)"
-                )
+                print(f"  📊 Analysis complete: {classified_as}")
                 print(f"    - XHR APIs found: {len(backend_data['xhr_api_calls'])}")
                 print(f"    - App subdomains: {len(backend_data['app_subdomains'])}")
                 print(
@@ -890,7 +859,6 @@ class CloudProviderDetector:
             else:
                 # No evidence found at all
                 result["primary_cloud_provider"] = "Insufficient Data"
-                result["confidence_score"] = 0
                 result["primary_reason"] = (
                     "No XHR API endpoints found in app subdomains - cannot determine cloud provider"
                 )
@@ -914,8 +882,7 @@ class CloudProviderDetector:
         if not provider_evidence:
             return "Detection based on combined XHR signals", ""
 
-        # Sort by confidence points to find strongest evidence
-        provider_evidence.sort(key=lambda x: x["confidence_points"], reverse=True)
+        # Use the first evidence (since all evidence is equally valid now)
         strongest = provider_evidence[0]
 
         if strongest["method"] == "XHR API Endpoint":
