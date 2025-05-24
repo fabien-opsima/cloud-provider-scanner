@@ -56,6 +56,29 @@ st.markdown(
         border-radius: 8px;
         margin-top: 1rem;
     }
+    .scrollable-test-results {
+        height: 500px;
+        overflow-y: auto;
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        padding: 10px;
+        background-color: #fafafa;
+        scroll-behavior: smooth;
+    }
+    .scrollable-test-results::-webkit-scrollbar {
+        width: 8px;
+    }
+    .scrollable-test-results::-webkit-scrollbar-track {
+        background: #f1f1f1;
+        border-radius: 4px;
+    }
+    .scrollable-test-results::-webkit-scrollbar-thumb {
+        background: #888;
+        border-radius: 4px;
+    }
+    .scrollable-test-results::-webkit-scrollbar-thumb:hover {
+        background: #555;
+    }
 </style>
 """,
     unsafe_allow_html=True,
@@ -1036,6 +1059,7 @@ def display_test_results_live(
 
     avg_confidence = total_confidence / total if total > 0 else 0
 
+    # Always visible summary metrics at the top
     with test_summary_metrics.container():
         col1, col2, col3, col4 = st.columns(4)
         with col1:
@@ -1058,12 +1082,28 @@ def display_test_results_live(
         # Progress indicator
         st.progress(accuracy_so_far / 100 if accuracy_so_far <= 100 else 1.0)
 
-    # Display test results using cards instead of table
+        # Provider distribution chart for predictions - always visible
+        if providers and len(providers) > 1:
+            st.write("🔍 **Live Prediction Distribution:**")
+            provider_df = pd.DataFrame(
+                list(providers.items()), columns=["Provider", "Count"]
+            )
+            st.bar_chart(provider_df.set_index("Provider"), height=200)
+
+    # Scrollable test results container with fixed height
     with test_results_table.container():
         st.write(f"**📋 Live Test Results ({len(results)} completed)**")
 
-        # Show most recent results first (reverse order)
-        for i, result in enumerate(reversed(results[-5:])):  # Show last 5 results
+        # Create a unique ID for this results container
+        container_id = f"test-results-{len(results)}"
+
+        # Create a scrollable container for all cards
+        cards_html = f"""
+        <div id="{container_id}" class="scrollable-test-results">
+        """
+
+        # Show all results in chronological order (oldest first)
+        for i, result in enumerate(results):
             is_correct = result.get("correct", False)
             domain = result["domain"]
             true_label = result["true_label"]
@@ -1109,9 +1149,8 @@ def display_test_results_live(
             true_emoji = get_provider_emoji(true_label)
             pred_emoji = get_provider_emoji(predicted_label)
 
-            # Create test result card
-            st.markdown(
-                f"""
+            # Add card to the HTML string
+            cards_html += f"""
             <div style="
                 background-color: {card_color};
                 padding: 15px;
@@ -1131,11 +1170,26 @@ def display_test_results_live(
                     <strong>Reason:</strong> {primary_reason}
                 </div>
             </div>
-            """,
-                unsafe_allow_html=True,
-            )
+            """
 
-        # Quick stats
+        # Close the scrollable container and add auto-scroll to bottom
+        cards_html += f"""
+        </div>
+        <script>
+            // Auto-scroll to bottom of the specific results container
+            setTimeout(function() {{
+                var container = document.getElementById('{container_id}');
+                if (container) {{
+                    container.scrollTop = container.scrollHeight;
+                }}
+            }}, 200);
+        </script>
+        """
+
+        # Display the scrollable cards container
+        st.markdown(cards_html, unsafe_allow_html=True)
+
+        # Quick stats below the scrollable area
         wrong_count = total - correct_count
         if wrong_count > 0:
             st.write(
@@ -1145,15 +1199,6 @@ def display_test_results_live(
             st.write(
                 f"🎉 **Perfect so far!** {correct_count} out of {correct_count} correct"
             )
-
-    # Provider distribution chart for predictions
-    if providers and len(providers) > 1:
-        with test_summary_metrics.container():
-            st.write("🔍 **Live Prediction Distribution:**")
-            provider_df = pd.DataFrame(
-                list(providers.items()), columns=["Provider", "Count"]
-            )
-            st.bar_chart(provider_df.set_index("Provider"), height=200)
 
 
 def display_final_test_results(
