@@ -421,8 +421,10 @@ def run_accuracy_test(headless_mode: bool):
 
         # Custom test run with progress and live display
         results = []
-        predictions = []
-        true_labels = []
+        predictions = []  # Only classified predictions (excluding "Insufficient Data")
+        true_labels = []  # Corresponding true labels for classified predictions
+        all_results = []  # All results including "Insufficient Data"
+        insufficient_data_count = 0
 
         for i, (_, row) in enumerate(test_df.iterrows()):
             domain = row["domain"]
@@ -441,46 +443,98 @@ def run_accuracy_test(headless_mode: bool):
                 confidence = result["confidence_score"]
                 primary_reason = result.get("primary_reason", "No reason provided")
 
-                predictions.append(predicted_label)
-                true_labels.append(true_label)
-
-                # Determine if prediction is correct
-                is_correct = predicted_label == true_label
-
+                # Create test result object
                 test_result = {
                     "domain": domain,
                     "true_label": true_label,
                     "predicted_label": predicted_label,
                     "confidence": confidence,
                     "primary_reason": primary_reason,
-                    "correct": is_correct,
+                    "correct": predicted_label == true_label,
+                    "is_insufficient_data": predicted_label == "Insufficient Data",
                 }
                 results.append(test_result)
+                all_results.append(test_result)
 
-                # Print result to console for real-time feedback
-                correct_emoji = "✅" if is_correct else "❌"
-                print(
-                    f"{correct_emoji} {domain} → True: {true_label}, Predicted: {predicted_label} ({confidence:.1f}%) {'CORRECT' if is_correct else 'WRONG'}"
-                )
-                print(f"   Reason: {primary_reason}")
-
-                # Show immediate result with prominent display
-                if is_correct:
-                    current_result_placeholder.success(
-                        f"✅ **CORRECT!** `{domain}` → True: {true_label}, Predicted: {predicted_label} ({confidence:.1f}%)\n\n💡 **Reason:** {primary_reason}"
+                # Handle "Insufficient Data" separately
+                if predicted_label == "Insufficient Data":
+                    insufficient_data_count += 1
+                    # Print result to console for real-time feedback
+                    print(
+                        f"🔍 {domain} → True: {true_label}, Predicted: {predicted_label} (excluded from accuracy)"
                     )
+                    print(f"   Reason: {primary_reason}")
+
+                    # Show immediate result with prominent display
+                    current_result_placeholder.info(
+                        f"🔍 **INSUFFICIENT DATA** `{domain}` → Expected: {true_label}, Result: Insufficient Data\n\n💡 **Reason:** {primary_reason}"
+                    )
+
+                    # Update status
+                    classified_so_far = len(predictions)
+                    accuracy_so_far = (
+                        (
+                            sum(
+                                1
+                                for r in results
+                                if r.get("correct", False)
+                                and not r.get("is_insufficient_data", False)
+                            )
+                            / classified_so_far
+                            * 100
+                        )
+                        if classified_so_far > 0
+                        else 0
+                    )
+
+                    status_text.text(
+                        f"🔍 {i + 1}/{total_domains}: {domain} → Insufficient Data (excluded) | Accuracy of classified: {accuracy_so_far:.1f}%"
+                    )
+
                 else:
-                    current_result_placeholder.error(
-                        f"❌ **WRONG!** `{domain}` → True: {true_label}, Predicted: {predicted_label} ({confidence:.1f}%)\n\n💡 **Reason:** {primary_reason}"
+                    # Add to classification metrics
+                    predictions.append(predicted_label)
+                    true_labels.append(true_label)
+
+                    # Determine if prediction is correct
+                    is_correct = predicted_label == true_label
+
+                    # Print result to console for real-time feedback
+                    correct_emoji = "✅" if is_correct else "❌"
+                    print(
+                        f"{correct_emoji} {domain} → True: {true_label}, Predicted: {predicted_label} ({confidence:.1f}%) {'CORRECT' if is_correct else 'WRONG'}"
+                    )
+                    print(f"   Reason: {primary_reason}")
+
+                    # Show immediate result with prominent display
+                    if is_correct:
+                        current_result_placeholder.success(
+                            f"✅ **CORRECT!** `{domain}` → True: {true_label}, Predicted: {predicted_label} ({confidence:.1f}%)\n\n💡 **Reason:** {primary_reason}"
+                        )
+                    else:
+                        current_result_placeholder.error(
+                            f"❌ **WRONG!** `{domain}` → True: {true_label}, Predicted: {predicted_label} ({confidence:.1f}%)\n\n💡 **Reason:** {primary_reason}"
+                        )
+
+                    # Update status with result
+                    accuracy_so_far = (
+                        (
+                            sum(
+                                1
+                                for r in results
+                                if r.get("correct", False)
+                                and not r.get("is_insufficient_data", False)
+                            )
+                            / len(predictions)
+                            * 100
+                        )
+                        if len(predictions) > 0
+                        else 0
                     )
 
-                # Update status with result
-                accuracy_so_far = (
-                    sum(1 for r in results if r.get("correct", False)) / len(results)
-                ) * 100
-                status_text.text(
-                    f"{correct_emoji} {i + 1}/{total_domains}: {domain} → {predicted_label} ({'✅ Correct' if is_correct else '❌ Wrong'}) | Running Accuracy: {accuracy_so_far:.1f}%"
-                )
+                    status_text.text(
+                        f"{correct_emoji} {i + 1}/{total_domains}: {domain} → {predicted_label} ({'✅ Correct' if is_correct else '❌ Wrong'}) | Accuracy: {accuracy_so_far:.1f}%"
+                    )
 
                 # Update live test results display
                 display_test_results_live(
@@ -522,7 +576,7 @@ def run_accuracy_test(headless_mode: bool):
         current_result_placeholder.success("🎉 **All tests completed!**")
         status_text.success("✅ Accuracy Test Complete!")
 
-        # Calculate final metrics
+        # Calculate final metrics excluding "Insufficient Data"
         from sklearn.metrics import (
             accuracy_score,
             precision_score,
@@ -530,20 +584,62 @@ def run_accuracy_test(headless_mode: bool):
             classification_report,
         )
 
-        accuracy = accuracy_score(true_labels, predictions)
-        labels = list(set(true_labels + predictions))
-        precision = precision_score(
-            true_labels, predictions, labels=labels, average="weighted", zero_division=0
-        )
-        recall = recall_score(
-            true_labels, predictions, labels=labels, average="weighted", zero_division=0
-        )
-        report = classification_report(
-            true_labels, predictions, labels=labels, zero_division=0, output_dict=True
+        # Calculate comprehensive metrics
+        total_domains = len(test_df)
+        classified_domains = len(predictions)
+        classification_rate = (
+            (classified_domains / total_domains) * 100 if total_domains > 0 else 0
         )
 
-        # Display final test results
-        display_final_test_results(accuracy, precision, recall, report, results)
+        if classified_domains > 0:
+            accuracy = accuracy_score(true_labels, predictions)
+
+            # Get unique labels for precision/recall calculation (excluding "Insufficient Data")
+            labels = list(set(true_labels + predictions))
+            labels = [label for label in labels if label != "Insufficient Data"]
+
+            precision = precision_score(
+                true_labels,
+                predictions,
+                labels=labels,
+                average="weighted",
+                zero_division=0,
+            )
+            recall = recall_score(
+                true_labels,
+                predictions,
+                labels=labels,
+                average="weighted",
+                zero_division=0,
+            )
+            report = classification_report(
+                true_labels,
+                predictions,
+                labels=labels,
+                zero_division=0,
+                output_dict=True,
+            )
+        else:
+            # No domains were classified
+            accuracy = 0.0
+            precision = 0.0
+            recall = 0.0
+            report = {}
+
+        # Enhanced metrics object
+        enhanced_metrics = {
+            "accuracy": accuracy,
+            "precision": precision,
+            "recall": recall,
+            "classification_report": report,
+            "total_domains": total_domains,
+            "classified_domains": classified_domains,
+            "insufficient_data_count": insufficient_data_count,
+            "classification_rate": classification_rate,
+        }
+
+        # Display final test results with enhanced metrics
+        display_final_test_results(enhanced_metrics, results)
 
     except Exception as e:
         st.error(f"❌ Test failed: {str(e)}")
@@ -597,7 +693,12 @@ def display_results(results: List[Dict], container):
             primary_reason = result.get("primary_reason", "No reason provided")
 
             # Color coding based on correctness and confidence
-            if (
+            if provider == "Insufficient Data":
+                card_color = "#e8f4fd"  # Light blue for insufficient data
+                status_emoji = "🔍"
+                status_text = "INSUFFICIENT DATA"
+                border_color = "#17a2b8"
+            elif (
                 result.get("correct", False) and confidence >= 40
             ):  # Correct with reasonable confidence
                 card_color = "#d4f6d4"  # Light green
@@ -632,6 +733,8 @@ def display_results(results: List[Dict], container):
                     return "🔵"
                 elif provider == "Azure":
                     return "🔷"
+                elif provider == "Insufficient Data":
+                    return "🔍"
                 else:
                     return "⚫"
 
@@ -1105,14 +1208,20 @@ def display_test_results_live(
         # Show all results in chronological order (oldest first)
         for i, result in enumerate(results):
             is_correct = result.get("correct", False)
+            is_insufficient_data = result.get("is_insufficient_data", False)
             domain = result["domain"]
             true_label = result["true_label"]
             predicted_label = result["predicted_label"]
             confidence = result.get("confidence", 0)
             primary_reason = result.get("primary_reason", "No reason provided")
 
-            # Color coding based on correctness and confidence
-            if is_correct and confidence >= 40:  # Correct with reasonable confidence
+            # Enhanced color coding to handle "Insufficient Data"
+            if is_insufficient_data:
+                card_color = "#e8f4fd"  # Light blue for insufficient data
+                status_emoji = "🔍"
+                status_text = "INSUFFICIENT DATA"
+                border_color = "#17a2b8"
+            elif is_correct and confidence >= 40:  # Correct with reasonable confidence
                 card_color = "#d4f6d4"  # Light green
                 status_emoji = "✅"
                 status_text = "CORRECT"
@@ -1143,34 +1252,61 @@ def display_test_results_live(
                     return "🔵"
                 elif provider == "Azure":
                     return "🔷"
+                elif provider == "Insufficient Data":
+                    return "🔍"
                 else:
                     return "⚫"
 
             true_emoji = get_provider_emoji(true_label)
             pred_emoji = get_provider_emoji(predicted_label)
 
-            # Add card to the HTML string
-            cards_html += f"""
-            <div style="
-                background-color: {card_color};
-                padding: 15px;
-                border-radius: 8px;
-                border-left: 4px solid {border_color};
-                margin: 8px 0;
-                font-size: 14px;
-            ">
-                <div style="font-weight: bold; margin-bottom: 8px;">
-                    {status_emoji} <strong>{domain}</strong> - {status_text}
+            # Add card to the HTML string with appropriate display for insufficient data
+            if is_insufficient_data:
+                # Special display for insufficient data cases
+                cards_html += f"""
+                <div style="
+                    background-color: {card_color};
+                    padding: 15px;
+                    border-radius: 8px;
+                    border-left: 4px solid {border_color};
+                    margin: 8px 0;
+                    font-size: 14px;
+                ">
+                    <div style="font-weight: bold; margin-bottom: 8px;">
+                        {status_emoji} <strong>{domain}</strong> - {status_text}
+                    </div>
+                    <div style="margin-bottom: 5px;">
+                        <strong>Expected:</strong> {true_emoji} {true_label} | 
+                        <strong>Result:</strong> {pred_emoji} Insufficient Data (excluded from accuracy)
+                    </div>
+                    <div style="background-color: white; padding: 10px; border-radius: 4px; font-family: monospace; font-size: 12px;">
+                        <strong>Reason:</strong> {primary_reason}
+                    </div>
                 </div>
-                <div style="margin-bottom: 5px;">
-                    <strong>Expected:</strong> {true_emoji} {true_label} | 
-                    <strong>Predicted:</strong> {pred_emoji} {predicted_label} ({confidence:.1f}%)
+                """
+            else:
+                # Normal display for classified cases
+                cards_html += f"""
+                <div style="
+                    background-color: {card_color};
+                    padding: 15px;
+                    border-radius: 8px;
+                    border-left: 4px solid {border_color};
+                    margin: 8px 0;
+                    font-size: 14px;
+                ">
+                    <div style="font-weight: bold; margin-bottom: 8px;">
+                        {status_emoji} <strong>{domain}</strong> - {status_text}
+                    </div>
+                    <div style="margin-bottom: 5px;">
+                        <strong>Expected:</strong> {true_emoji} {true_label} | 
+                        <strong>Predicted:</strong> {pred_emoji} {predicted_label} ({confidence:.1f}%)
+                    </div>
+                    <div style="background-color: white; padding: 10px; border-radius: 4px; font-family: monospace; font-size: 12px;">
+                        <strong>Reason:</strong> {primary_reason}
+                    </div>
                 </div>
-                <div style="background-color: white; padding: 10px; border-radius: 4px; font-family: monospace; font-size: 12px;">
-                    <strong>Reason:</strong> {primary_reason}
-                </div>
-            </div>
-            """
+                """
 
         # Close the scrollable container and add auto-scroll to bottom
         cards_html += f"""
@@ -1190,37 +1326,80 @@ def display_test_results_live(
         st.markdown(cards_html, unsafe_allow_html=True)
 
         # Quick stats below the scrollable area
-        wrong_count = total - correct_count
-        if wrong_count > 0:
-            st.write(
-                f"📈 **Current Stats:** {correct_count} correct, {wrong_count} wrong"
-            )
+        classified_count = sum(
+            1 for r in results if not r.get("is_insufficient_data", False)
+        )
+        correct_count = sum(
+            1
+            for r in results
+            if r.get("correct", False) and not r.get("is_insufficient_data", False)
+        )
+        insufficient_count = sum(
+            1 for r in results if r.get("is_insufficient_data", False)
+        )
+        wrong_count = classified_count - correct_count
+
+        if classified_count > 0:
+            accuracy_percent = (correct_count / classified_count) * 100
+            if wrong_count > 0:
+                st.write(
+                    f"📈 **Current Stats:** {correct_count} correct, {wrong_count} wrong, {insufficient_count} insufficient data | **Accuracy: {accuracy_percent:.1f}%**"
+                )
+            else:
+                st.write(
+                    f"🎉 **Perfect classification!** {correct_count} out of {classified_count} correct, {insufficient_count} insufficient data"
+                )
         else:
             st.write(
-                f"🎉 **Perfect so far!** {correct_count} out of {correct_count} correct"
+                f"🔍 **No classifications yet** - {insufficient_count} domains had insufficient data"
             )
 
 
-def display_final_test_results(
-    accuracy: float, precision: float, recall: float, report: dict, results: List[Dict]
-):
+def display_final_test_results(test_metrics: dict, results: List[Dict]):
     """Display final test results using cards instead of tables to prevent truncation."""
     st.subheader("🎯 Final Test Results")
 
-    # Main metrics
-    col1, col2, col3 = st.columns(3)
+    # Enhanced metrics display including classification rate
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("Accuracy", f"{accuracy:.3f}", f"{accuracy * 100:.1f}%")
+        st.metric(
+            "Accuracy",
+            f"{test_metrics['accuracy']:.3f}",
+            f"{test_metrics['accuracy'] * 100:.1f}%",
+        )
     with col2:
-        st.metric("Precision", f"{precision:.3f}", f"{precision * 100:.1f}%")
+        st.metric(
+            "Precision",
+            f"{test_metrics['precision']:.3f}",
+            f"{test_metrics['precision'] * 100:.1f}%",
+        )
     with col3:
-        st.metric("Recall", f"{recall:.3f}", f"{recall * 100:.1f}%")
+        st.metric(
+            "Recall",
+            f"{test_metrics['recall']:.3f}",
+            f"{test_metrics['recall'] * 100:.1f}%",
+        )
+    with col4:
+        st.metric(
+            "Classification Rate",
+            f"{test_metrics['classification_rate']:.1f}%",
+            f"{test_metrics['classified_domains']}/{test_metrics['total_domains']} domains",
+        )
+
+    # Key information about insufficient data
+    if test_metrics["insufficient_data_count"] > 0:
+        st.info(f"""
+        📊 **Enhanced Accuracy Calculation:**
+        - **Accuracy** is calculated only on domains where sufficient data was available for classification
+        - **{test_metrics["insufficient_data_count"]} domains** had insufficient data and were excluded from accuracy metrics
+        - **Classification Rate**: {test_metrics["classification_rate"]:.1f}% of domains could be classified
+        """)
 
     # Detailed classification report
     st.subheader("📊 Per-Class Metrics")
 
     class_metrics = []
-    for label, metrics in report.items():
+    for label, metrics in test_metrics["classification_report"].items():
         if label not in ["accuracy", "macro avg", "weighted avg"] and isinstance(
             metrics, dict
         ):
@@ -1240,9 +1419,13 @@ def display_final_test_results(
 
     # Test summary statistics
     total = len(results)
-    correct_count = sum(1 for r in results if r.get("correct", False))
+    correct_count = sum(
+        1
+        for r in results
+        if r.get("correct", False) and not r.get("is_insufficient_data", False)
+    )
     error_count = sum(1 for r in results if r.get("predicted_label") == "Error")
-    success_rate = ((total - error_count) / total * 100) if total > 0 else 0
+    insufficient_count = sum(1 for r in results if r.get("is_insufficient_data", False))
 
     # Provider breakdown
     providers = {}
@@ -1252,15 +1435,17 @@ def display_final_test_results(
 
     # Display summary metrics
     st.subheader("📈 Test Summary")
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
         st.metric("Total Tested", total)
     with col2:
-        st.metric("Test Success Rate", f"{success_rate:.1f}%")
+        st.metric("Classified", test_metrics["classified_domains"])
     with col3:
-        st.metric("Correctly Predicted", f"{correct_count}/{total}")
+        st.metric("Correct", correct_count)
     with col4:
-        st.metric("Error Count", error_count)
+        st.metric("Insufficient Data", insufficient_count)
+    with col5:
+        st.metric("Errors", error_count)
 
     # Detailed test results using cards instead of table
     st.subheader("🔍 Complete Test Results")
@@ -1275,20 +1460,28 @@ def display_final_test_results(
             return "🔷"
         elif provider == "Error":
             return "❌"
+        elif provider == "Insufficient Data":
+            return "🔍"
         else:
             return "⚫"
 
     # Display all results as cards
     for i, result in enumerate(results):
         is_correct = result.get("correct", False)
+        is_insufficient_data = result.get("is_insufficient_data", False)
         domain = result["domain"]
         true_label = result["true_label"]
         predicted_label = result["predicted_label"]
         confidence = result.get("confidence", 0)
         primary_reason = result.get("primary_reason", "No reason provided")
 
-        # Color coding based on correctness and confidence
-        if is_correct and confidence >= 40:  # Correct with reasonable confidence
+        # Enhanced color coding to handle "Insufficient Data"
+        if is_insufficient_data:
+            card_color = "#e8f4fd"  # Light blue for insufficient data
+            status_emoji = "🔍"
+            status_text = "INSUFFICIENT DATA"
+            border_color = "#17a2b8"
+        elif is_correct and confidence >= 40:  # Correct with reasonable confidence
             card_color = "#d4f6d4"  # Light green
             status_emoji = "✅"
             status_text = "CORRECT"
@@ -1365,7 +1558,7 @@ def display_final_test_results(
     🧪 **Accuracy Test Complete!**
     
     ✅ **{total} domains tested**
-    🎯 **{accuracy * 100:.1f}% overall accuracy**
+    🎯 **{test_metrics["accuracy"] * 100:.1f}% overall accuracy**
     📈 **{correct_count} correct predictions**
     ⚡ **{len([p for p in providers.keys() if p != "Error"])} unique providers detected**
     
@@ -1375,7 +1568,7 @@ def display_final_test_results(
     # Print summary to console/logs
     print("\n🧪 ACCURACY TEST COMPLETE!")
     print(f"📊 Total domains tested: {total}")
-    print(f"🎯 Overall accuracy: {accuracy * 100:.1f}%")
+    print(f"🎯 Overall accuracy: {test_metrics['accuracy'] * 100:.1f}%")
     print(f"✅ Correct predictions: {correct_count}")
     print(f"❌ Incorrect predictions: {total - correct_count}")
     print("☁️ Provider prediction breakdown:")

@@ -825,8 +825,10 @@ class CloudProviderDetector:
                 total_possible_score = 180.0
                 confidence_score = min((max_score / total_possible_score) * 100, 100)
 
-                # Only assign provider if confidence is above threshold
-                if confidence_score >= 20:  # Adjusted threshold for XHR-only analysis
+                # Classification logic with better confidence thresholds
+                if (
+                    confidence_score >= 40
+                ):  # High confidence threshold for cloud provider detection
                     result["primary_cloud_provider"] = primary_provider
 
                     # Determine primary reason based on evidence
@@ -838,10 +840,27 @@ class CloudProviderDetector:
                         e for e in evidence_list if e["provider"] == primary_provider
                     ]
 
-                else:
-                    result["primary_cloud_provider"] = "Other"
+                elif (
+                    confidence_score >= 20
+                ):  # Medium confidence - could be the provider but not certain
+                    result["primary_cloud_provider"] = primary_provider
+
+                    # Determine primary reason based on evidence
+                    primary_reason, main_evidence = self._determine_primary_reason_xhr(
+                        evidence_list, primary_provider, backend_match, backend_data
+                    )
                     result["primary_reason"] = (
-                        f"Low confidence ({confidence_score:.1f}%) - insufficient XHR API evidence"
+                        f"Low confidence detection: {primary_reason}"
+                    )
+                    result["evidence"] = [
+                        e for e in evidence_list if e["provider"] == primary_provider
+                    ]
+
+                else:
+                    # Not enough evidence to classify - use "Insufficient Data" instead of "Other"
+                    result["primary_cloud_provider"] = "Insufficient Data"
+                    result["primary_reason"] = (
+                        f"Very low confidence ({confidence_score:.1f}%) - insufficient XHR API evidence for classification"
                     )
 
                 result["confidence_score"] = confidence_score
@@ -849,8 +868,9 @@ class CloudProviderDetector:
                 result["details"]["all_evidence"] = evidence_list
 
                 # Summary stats
+                classified_as = result["primary_cloud_provider"]
                 print(
-                    f"  📊 Analysis complete: {primary_provider} ({confidence_score:.1f}% confidence)"
+                    f"  📊 Analysis complete: {classified_as} ({confidence_score:.1f}% confidence)"
                 )
                 print(f"    - XHR APIs found: {len(backend_data['xhr_api_calls'])}")
                 print(f"    - App subdomains: {len(backend_data['app_subdomains'])}")
@@ -859,10 +879,11 @@ class CloudProviderDetector:
                 )
 
             else:
-                result["primary_cloud_provider"] = "Other"
+                # No evidence found at all
+                result["primary_cloud_provider"] = "Insufficient Data"
                 result["confidence_score"] = 0
                 result["primary_reason"] = (
-                    "No XHR API endpoints found in app subdomains"
+                    "No XHR API endpoints found in app subdomains - cannot determine cloud provider"
                 )
                 print("  ❌ No backend cloud infrastructure detected")
 
@@ -936,6 +957,8 @@ class CloudProviderDetector:
             # Run analysis on test domains
             predictions = []
             true_labels = []
+            insufficient_data_count = 0
+            all_results = []
 
             for _, row in df.iterrows():
                 domain = row["domain"]
@@ -945,50 +968,90 @@ class CloudProviderDetector:
                 result = asyncio.run(self.analyze_website(domain))
                 predicted_label = result["primary_cloud_provider"]
 
-                predictions.append(predicted_label)
-                true_labels.append(true_label)
-
-                print(
-                    f"Domain: {domain}, True: {true_label}, Predicted: {predicted_label}"
+                all_results.append(
+                    {
+                        "domain": domain,
+                        "true_label": true_label,
+                        "predicted_label": predicted_label,
+                        "confidence": result.get("confidence_score", 0),
+                        "reason": result.get("primary_reason", ""),
+                    }
                 )
 
-            # Calculate metrics
-            accuracy = accuracy_score(true_labels, predictions)
+                # Track insufficient data cases separately
+                if predicted_label == "Insufficient Data":
+                    insufficient_data_count += 1
+                    print(
+                        f"Domain: {domain}, True: {true_label}, Predicted: {predicted_label} (excluded from accuracy)"
+                    )
+                else:
+                    predictions.append(predicted_label)
+                    true_labels.append(true_label)
+                    print(
+                        f"Domain: {domain}, True: {true_label}, Predicted: {predicted_label}"
+                    )
 
-            # Get unique labels for precision/recall calculation
-            labels = list(set(true_labels + predictions))
-
-            precision = precision_score(
-                true_labels,
-                predictions,
-                labels=labels,
-                average="weighted",
-                zero_division=0,
-            )
-            recall = recall_score(
-                true_labels,
-                predictions,
-                labels=labels,
-                average="weighted",
-                zero_division=0,
+            # Calculate metrics only for classified domains (excluding "Insufficient Data")
+            total_domains = len(df)
+            classified_domains = len(predictions)
+            classification_rate = (
+                (classified_domains / total_domains) * 100 if total_domains > 0 else 0
             )
 
-            # Detailed classification report
-            report = classification_report(
-                true_labels,
-                predictions,
-                labels=labels,
-                zero_division=0,
-                output_dict=True,
-            )
+            if classified_domains > 0:
+                accuracy = accuracy_score(true_labels, predictions)
+
+                # Get unique labels for precision/recall calculation (excluding "Insufficient Data")
+                labels = list(set(true_labels + predictions))
+                # Remove "Insufficient Data" if it somehow got in
+                labels = [label for label in labels if label != "Insufficient Data"]
+
+                precision = precision_score(
+                    true_labels,
+                    predictions,
+                    labels=labels,
+                    average="weighted",
+                    zero_division=0,
+                )
+                recall = recall_score(
+                    true_labels,
+                    predictions,
+                    labels=labels,
+                    average="weighted",
+                    zero_division=0,
+                )
+
+                # Detailed classification report
+                report = classification_report(
+                    true_labels,
+                    predictions,
+                    labels=labels,
+                    zero_division=0,
+                    output_dict=True,
+                )
+            else:
+                # No domains were classified
+                accuracy = 0.0
+                precision = 0.0
+                recall = 0.0
+                report = {}
 
             return {
                 "accuracy": accuracy,
                 "precision": precision,
                 "recall": recall,
                 "classification_report": report,
+                "total_domains": total_domains,
+                "classified_domains": classified_domains,
+                "insufficient_data_count": insufficient_data_count,
+                "classification_rate": classification_rate,
+                "all_results": all_results,
                 "predictions": list(
-                    zip(df["domain"].tolist(), true_labels, predictions)
+                    zip(
+                        df["domain"].tolist(),
+                        [r["true_label"] for r in all_results],
+                        [r["predicted_label"] for r in all_results],
+                    )
                 ),
             }
 
