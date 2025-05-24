@@ -1213,9 +1213,8 @@ def display_test_results_live(
             unsafe_allow_html=True,
         )
 
-        # Display individual cards using native Streamlit components
-        # Streamlit will handle scrolling automatically
-        for i, result in enumerate(results):
+        # Display all results as cards - show newest first
+        for i, result in enumerate(reversed(results)):
             is_correct = result.get("correct", False)
             is_insufficient_data = result.get("is_insufficient_data", False)
             domain = result["domain"]
@@ -1224,8 +1223,14 @@ def display_test_results_live(
             confidence = result.get("confidence", 0)
             primary_reason = result.get("primary_reason", "No reason provided")
 
-            # Enhanced color coding to handle "Insufficient Data"
-            if is_insufficient_data:
+            # Enhanced color coding to handle "Insufficient Data" and fix the red error bug
+            if predicted_label == "Error":
+                # Actual errors (analysis failed)
+                card_color = "#f6d4d4"  # Light red for actual errors
+                status_emoji = "❌"
+                status_text = "ERROR"
+                border_color = "#dc3545"
+            elif is_insufficient_data:
                 card_color = "#e8f4fd"  # Light blue for insufficient data
                 status_emoji = "🔍"
                 status_text = "INSUFFICIENT DATA"
@@ -1235,20 +1240,19 @@ def display_test_results_live(
                 status_emoji = "✅"
                 status_text = "CORRECT"
                 border_color = "#28a745"
-            elif (
-                is_correct and predicted_label == "Other" and confidence < 40
-            ):  # "Other" match but low confidence
-                card_color = "#f0f0f0"  # Light grey - not enough info to be confident about "Other"
-                status_emoji = "⚫"
-                status_text = "LOW CONFIDENCE"
-                border_color = "#6c757d"
-            elif confidence < 30:  # Low confidence for any result
+            elif is_correct and confidence < 40:  # Correct but low confidence
+                card_color = "#fff3cd"  # Light yellow for correct but low confidence
+                status_emoji = "✅"
+                status_text = "CORRECT (LOW CONFIDENCE)"
+                border_color = "#ffc107"
+            elif confidence < 30:  # Wrong and low confidence
                 card_color = "#f0f0f0"  # Light grey
                 status_emoji = "⚫"
-                status_text = "LOW CONFIDENCE"
+                status_text = "WRONG (LOW CONFIDENCE)"
                 border_color = "#6c757d"
             else:
-                card_color = "#f6d4d4"  # Light red for actual wrong predictions with decent confidence
+                # Wrong with decent confidence
+                card_color = "#f6d4d4"  # Light red for wrong predictions
                 status_emoji = "❌"
                 status_text = "WRONG"
                 border_color = "#dc3545"
@@ -1261,6 +1265,8 @@ def display_test_results_live(
                     return "🔵"
                 elif provider == "Azure":
                     return "🔷"
+                elif provider == "Error":
+                    return "❌"
                 elif provider == "Insufficient Data":
                     return "🔍"
                 else:
@@ -1460,8 +1466,8 @@ def display_final_test_results(test_metrics: dict, results: List[Dict]):
         else:
             return "⚫"
 
-    # Display all results as cards
-    for i, result in enumerate(results):
+    # Display all results as cards - show newest first
+    for i, result in enumerate(reversed(results)):
         is_correct = result.get("correct", False)
         is_insufficient_data = result.get("is_insufficient_data", False)
         domain = result["domain"]
@@ -1470,8 +1476,14 @@ def display_final_test_results(test_metrics: dict, results: List[Dict]):
         confidence = result.get("confidence", 0)
         primary_reason = result.get("primary_reason", "No reason provided")
 
-        # Enhanced color coding to handle "Insufficient Data"
-        if is_insufficient_data:
+        # Enhanced color coding to handle "Insufficient Data" and fix the red error bug
+        if predicted_label == "Error":
+            # Actual errors (analysis failed)
+            card_color = "#f6d4d4"  # Light red for actual errors
+            status_emoji = "❌"
+            status_text = "ERROR"
+            border_color = "#dc3545"
+        elif is_insufficient_data:
             card_color = "#e8f4fd"  # Light blue for insufficient data
             status_emoji = "🔍"
             status_text = "INSUFFICIENT DATA"
@@ -1481,37 +1493,24 @@ def display_final_test_results(test_metrics: dict, results: List[Dict]):
             status_emoji = "✅"
             status_text = "CORRECT"
             border_color = "#28a745"
-        elif (
-            is_correct and predicted_label == "Other" and confidence < 40
-        ):  # "Other" match but low confidence
-            card_color = (
-                "#f0f0f0"  # Light grey - not enough info to be confident about "Other"
-            )
-            status_emoji = "⚫"
-            status_text = "LOW CONFIDENCE"
-            border_color = "#6c757d"
-        elif confidence < 30:  # Low confidence for any result
+        elif is_correct and confidence < 40:  # Correct but low confidence
+            card_color = "#fff3cd"  # Light yellow for correct but low confidence
+            status_emoji = "✅"
+            status_text = "CORRECT (LOW CONFIDENCE)"
+            border_color = "#ffc107"
+        elif confidence < 30:  # Wrong and low confidence
             card_color = "#f0f0f0"  # Light grey
             status_emoji = "⚫"
-            status_text = "LOW CONFIDENCE"
+            status_text = "WRONG (LOW CONFIDENCE)"
             border_color = "#6c757d"
         else:
-            card_color = "#f6d4d4"  # Light red for actual wrong predictions with decent confidence
+            # Wrong with decent confidence
+            card_color = "#f6d4d4"  # Light red for wrong predictions
             status_emoji = "❌"
             status_text = "WRONG"
             border_color = "#dc3545"
 
         # Provider emojis
-        def get_provider_emoji(provider):
-            if provider == "AWS":
-                return "🟧"
-            elif provider == "GCP":
-                return "🔵"
-            elif provider == "Azure":
-                return "🔷"
-            else:
-                return "⚫"
-
         true_emoji = get_provider_emoji(true_label)
         pred_emoji = get_provider_emoji(predicted_label)
 
@@ -1549,13 +1548,22 @@ def display_final_test_results(test_metrics: dict, results: List[Dict]):
     )
 
     # Final summary info
+    # Calculate correct percentage for classified domains only (excluding errors and insufficient data)
+    classified_for_accuracy = sum(
+        1
+        for r in results
+        if not r.get("is_insufficient_data", False)
+        and r.get("predicted_label") != "Error"
+    )
+
     st.info(f"""
     🧪 **Accuracy Test Complete!**
     
     ✅ **{total} domains tested**
-    🎯 **{test_metrics["accuracy"] * 100:.1f}% overall accuracy**
+    📊 **{classified_for_accuracy} domains classified** (excluding errors & insufficient data)
+    🎯 **{test_metrics["accuracy"] * 100:.1f}% accuracy** (calculated on classified domains only)
     📈 **{correct_count} correct predictions**
-    ⚡ **{len([p for p in providers.keys() if p != "Error"])} unique providers detected**
+    ⚡ **{len([p for p in providers.keys() if p not in ["Error", "Insufficient Data"]])} unique providers detected**
     
     💡 Download the results above for further analysis!
     """)
@@ -1563,16 +1571,31 @@ def display_final_test_results(test_metrics: dict, results: List[Dict]):
     # Print summary to console/logs
     print("\n🧪 ACCURACY TEST COMPLETE!")
     print(f"📊 Total domains tested: {total}")
-    print(f"🎯 Overall accuracy: {test_metrics['accuracy'] * 100:.1f}%")
+    print(
+        f"📈 Domains classified: {classified_for_accuracy} (excluding errors & insufficient data)"
+    )
+    print(
+        f"🎯 Overall accuracy: {test_metrics['accuracy'] * 100:.1f}% (on classified domains)"
+    )
     print(f"✅ Correct predictions: {correct_count}")
-    print(f"❌ Incorrect predictions: {total - correct_count}")
+
+    # Calculate wrong predictions properly (excluding errors and insufficient data)
+    wrong_count = classified_for_accuracy - correct_count
+    print(f"❌ Wrong predictions: {wrong_count}")
+
     print("☁️ Provider prediction breakdown:")
     for provider, count in providers.items():
-        if provider != "Error":
-            percentage = (count / total) * 100
+        if provider not in ["Error", "Insufficient Data"]:
+            percentage = (
+                (count / classified_for_accuracy) * 100
+                if classified_for_accuracy > 0
+                else 0
+            )
             print(f"   {provider}: {count} predictions ({percentage:.1f}%)")
     if error_count > 0:
         print(f"⚠️  Errors encountered: {error_count}")
+    if insufficient_count > 0:
+        print(f"🔍 Insufficient data: {insufficient_count}")
     print(
         f"📁 Test results available for download: accuracy_test_results_{timestamp}.csv"
     )
