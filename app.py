@@ -1197,15 +1197,24 @@ def display_test_results_live(
     with test_results_table.container():
         st.write(f"**📋 Live Test Results ({len(results)} completed)**")
 
-        # Create a unique ID for this results container
-        container_id = f"test-results-{len(results)}"
+        # Add CSS for scrollable container
+        st.markdown(
+            """
+            <style>
+            .element-container:has(.test-result-card) {
+                max-height: 500px;
+                overflow-y: auto;
+            }
+            .test-result-card {
+                margin: 8px 0;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
 
-        # Create a scrollable container for all cards
-        cards_html = f"""
-        <div id="{container_id}" class="scrollable-test-results">
-        """
-
-        # Show all results in chronological order (oldest first)
+        # Display individual cards using native Streamlit components
+        # Streamlit will handle scrolling automatically
         for i, result in enumerate(results):
             is_correct = result.get("correct", False)
             is_insufficient_data = result.get("is_insufficient_data", False)
@@ -1260,11 +1269,11 @@ def display_test_results_live(
             true_emoji = get_provider_emoji(true_label)
             pred_emoji = get_provider_emoji(predicted_label)
 
-            # Add card to the HTML string with appropriate display for insufficient data
+            # Create individual card using native Streamlit markdown
             if is_insufficient_data:
                 # Special display for insufficient data cases
-                cards_html += f"""
-                <div style="
+                card_html = f"""
+                <div class="test-result-card" style="
                     background-color: {card_color};
                     padding: 15px;
                     border-radius: 8px;
@@ -1286,8 +1295,8 @@ def display_test_results_live(
                 """
             else:
                 # Normal display for classified cases
-                cards_html += f"""
-                <div style="
+                card_html = f"""
+                <div class="test-result-card" style="
                     background-color: {card_color};
                     padding: 15px;
                     border-radius: 8px;
@@ -1308,22 +1317,8 @@ def display_test_results_live(
                 </div>
                 """
 
-        # Close the scrollable container and add auto-scroll to bottom
-        cards_html += f"""
-        </div>
-        <script>
-            // Auto-scroll to bottom of the specific results container
-            setTimeout(function() {{
-                var container = document.getElementById('{container_id}');
-                if (container) {{
-                    container.scrollTop = container.scrollHeight;
-                }}
-            }}, 200);
-        </script>
-        """
-
-        # Display the scrollable cards container
-        st.markdown(cards_html, unsafe_allow_html=True)
+            # Display each card individually
+            st.markdown(card_html, unsafe_allow_html=True)
 
         # Quick stats below the scrollable area
         classified_count = sum(
