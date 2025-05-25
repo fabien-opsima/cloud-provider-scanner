@@ -578,13 +578,21 @@ def run_single_domain_test(domain: str, true_label: str, headless_mode: bool):
             else "crawl-activity"
         )
 
+        # Format detected providers for completion display
+        if len(all_detected_providers) > 1:
+            completion_display = " + ".join(all_detected_providers)
+        elif len(all_detected_providers) == 1:
+            completion_display = all_detected_providers[0]
+        else:
+            completion_display = predicted_label
+
         with activity_placeholder.container():
             st.markdown(
                 f"""
             <div class="crawl-activity {status_class}">
-                <h4>{status_emoji} Completed: {domain} → {predicted_label}</h4>
+                <h4>{status_emoji} Completed: {domain} → {completion_display}</h4>
                 <div style="padding: 0.5rem; background: white; border-radius: 4px; margin: 0.5rem 0;">
-                    <strong>Expected:</strong> {true_label} | <strong>Got:</strong> {predicted_label} | <strong>Confidence:</strong> {confidence}%
+                    <strong>Expected:</strong> {true_label} | <strong>Detected:</strong> {completion_display}
                 </div>
             </div>
             """,
@@ -648,15 +656,22 @@ def display_detailed_result(result: Dict):
         card_class = "result-card-wrong"
         status_text = "WRONG"
 
+    # Format detected providers for header
+    if len(all_detected_providers) > 1:
+        detected_display = " + ".join(all_detected_providers)
+    elif len(all_detected_providers) == 1:
+        detected_display = all_detected_providers[0]
+    else:
+        detected_display = predicted_label
+
     # Create detailed result card
     st.markdown(
         f"""
     <div class="result-card {card_class}">
-        <h4>{status_emoji} {domain} → {predicted_label} ({status_text})</h4>
+        <h4>{status_emoji} {domain} → {detected_display} ({status_text})</h4>
         <div style="margin: 0.5rem 0;">
             <strong>Expected:</strong> {true_label} | 
-            <strong>Predicted:</strong> {predicted_label} | 
-            <strong>Confidence:</strong> {confidence}%
+            <strong>Detected:</strong> {detected_display}
         </div>
     """,
         unsafe_allow_html=True,
@@ -674,15 +689,24 @@ def display_detailed_result(result: Dict):
     col1, col2 = st.columns([1, 1])
 
     with col1:
-        # Subdomains section
+        # Subdomains section (exclude www.)
         st.markdown('<div class="detail-section">', unsafe_allow_html=True)
         st.markdown("**🏢 Subdomains Explored:**")
         if backend_data.get("app_subdomains"):
-            for subdomain in backend_data["app_subdomains"]:
-                st.markdown(
-                    f'<div class="subdomain-item">📍 {subdomain}</div>',
-                    unsafe_allow_html=True,
-                )
+            # Filter out www. subdomains
+            filtered_subdomains = [
+                sub
+                for sub in backend_data["app_subdomains"]
+                if not sub.startswith("www.")
+            ]
+            if filtered_subdomains:
+                for subdomain in filtered_subdomains:
+                    st.markdown(
+                        f'<div class="subdomain-item">📍 {subdomain}</div>',
+                        unsafe_allow_html=True,
+                    )
+            else:
+                st.markdown("*No non-www subdomains discovered*")
         else:
             st.markdown("*No subdomains discovered*")
         st.markdown("</div>", unsafe_allow_html=True)
