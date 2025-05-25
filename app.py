@@ -18,6 +18,7 @@ import pandas as pd
 import asyncio
 import time
 import threading
+import copy
 from typing import Dict, List
 
 # Import our updated detector
@@ -469,7 +470,7 @@ def run_single_domain_test(domain: str, true_label: str, headless_mode: bool):
             backend_data = {
                 "app_subdomains": list(original_backend.get("app_subdomains", [])),
                 "xhr_api_calls": list(original_backend.get("xhr_api_calls", [])),
-                "cloud_provider_domains": list(
+                "cloud_provider_domains": copy.deepcopy(
                     original_backend.get("cloud_provider_domains", [])
                 ),
             }
@@ -478,10 +479,19 @@ def run_single_domain_test(domain: str, true_label: str, headless_mode: bool):
         if result.get("ip_analysis"):
             original_ip = result["ip_analysis"]
             ip_analysis = {
-                "cloud_ip_matches": list(original_ip.get("cloud_ip_matches", [])),
+                "cloud_ip_matches": copy.deepcopy(
+                    original_ip.get("cloud_ip_matches", [])
+                ),
                 "total_ips_checked": original_ip.get("total_ips_checked", 0),
                 "cloud_matches": original_ip.get("cloud_matches", 0),
             }
+
+        # Deep copy evidence data to prevent sharing
+        evidence_data = []
+        if result.get("evidence"):
+            evidence_data = copy.deepcopy(result["evidence"])
+        elif result.get("details", {}).get("all_evidence"):
+            evidence_data = copy.deepcopy(result["details"]["all_evidence"])
 
         # Show subdomain discovery
         if backend_data.get("app_subdomains"):
@@ -531,9 +541,9 @@ def run_single_domain_test(domain: str, true_label: str, headless_mode: bool):
         primary_reason = result.get("primary_reason", "No reason provided")
 
         # Show header analysis results
-        if result.get("evidence"):
+        if evidence_data:
             header_evidence = [
-                e for e in result["evidence"] if e.get("method") == "XHR API Headers"
+                e for e in evidence_data if e.get("method") == "XHR API Headers"
             ]
             if header_evidence:
                 update_activity(
@@ -587,6 +597,7 @@ def run_single_domain_test(domain: str, true_label: str, headless_mode: bool):
             "activity_log": list(activity_log),  # Create new list
             "backend_data": backend_data,  # Already deep copied above
             "ip_analysis": ip_analysis,  # Already deep copied above
+            "evidence": evidence_data,  # Deep copied evidence data
             "timestamp": time.time(),
         }
 
@@ -643,6 +654,7 @@ def run_single_domain_test(domain: str, true_label: str, headless_mode: bool):
             "activity_log": list(activity_log),  # Create new list
             "backend_data": {},
             "ip_analysis": {},
+            "evidence": [],  # Empty evidence for error cases
             "timestamp": time.time(),
         }
 
