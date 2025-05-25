@@ -234,6 +234,7 @@ def main():
             <h3>🎯 Detection Methods</h3>
             <p><strong>XHR API Analysis:</strong> Captures backend API calls from app subdomains</p>
             <p><strong>IP Range Matching:</strong> Matches IPs to official cloud provider ranges</p>
+            <p><strong>Backend Header Analysis:</strong> Analyzes HTTP headers for cloud-specific backend indicators (AWS API Gateway, GCP Cloud Functions, Azure App Service, etc.)</p>
             <p><strong>Direct Cloud Calls:</strong> Detects calls to *.amazonaws.com, *.googleapis.com etc.</p>
             <p><strong>Enhanced Subdomain Exploration:</strong> Tests api.domain, app.domain, admin.domain, dashboard.domain, and other common subdomains</p>
         </div>
@@ -496,6 +497,9 @@ def run_single_domain_test(domain: str, true_label: str, headless_mode: bool):
             )
             for api in backend_data["xhr_api_calls"][:3]:
                 update_activity(f"   📡 {api}")
+
+            # Show header analysis
+            update_activity("🛡️ Analyzing backend headers...")
         else:
             update_activity("🔗 No XHR API calls found")
 
@@ -525,6 +529,22 @@ def run_single_domain_test(domain: str, true_label: str, headless_mode: bool):
         predicted_label = result["primary_cloud_provider"]
         confidence = result.get("confidence_score", 0)
         primary_reason = result.get("primary_reason", "No reason provided")
+
+        # Show header analysis results
+        if result.get("evidence"):
+            header_evidence = [
+                e for e in result["evidence"] if e.get("method") == "XHR API Headers"
+            ]
+            if header_evidence:
+                update_activity(
+                    f"🛡️ Found backend headers: {len(header_evidence)} endpoints with cloud headers"
+                )
+                for evidence in header_evidence[:2]:  # Show first 2
+                    endpoint = evidence.get("details", {}).get(
+                        "endpoint_url", "unknown"
+                    )
+                    provider = evidence.get("provider", "unknown")
+                    update_activity(f"   🔍 {endpoint} → {provider} headers detected")
 
         # Final result with partial matching
         # Get all detected providers from result
@@ -771,6 +791,50 @@ def display_detailed_result(result: Dict):
                     )
         else:
             st.markdown("*No direct cloud provider calls detected*")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        # Backend Headers Analysis section
+        st.markdown('<div class="detail-section">', unsafe_allow_html=True)
+        st.markdown("**🛡️ Backend Headers Analysis:**")
+
+        # Check if we have header evidence in the stored result data
+        header_evidence = []
+
+        # Try to get evidence from the stored result data structure
+        if result.get("evidence"):
+            header_evidence = [
+                e for e in result["evidence"] if e.get("method") == "XHR API Headers"
+            ]
+        elif result.get("details", {}).get("all_evidence"):
+            # Fallback to all evidence if direct evidence not available
+            all_evidence = result["details"]["all_evidence"]
+            header_evidence = [
+                e for e in all_evidence if e.get("method") == "XHR API Headers"
+            ]
+
+        if header_evidence:
+            for evidence in header_evidence:
+                endpoint = evidence.get("details", {}).get(
+                    "endpoint_url", "Unknown endpoint"
+                )
+                headers = evidence.get("details", {}).get("headers_found", [])
+                provider = evidence.get("provider", "Unknown")
+
+                st.markdown(
+                    f'<div class="ip-match-item">🛡️ <strong>{endpoint}</strong><br>Provider: {provider}<br>Headers: {len(headers)} found</div>',
+                    unsafe_allow_html=True,
+                )
+
+                # Show individual headers in a collapsible way
+                if headers:
+                    with st.expander(
+                        f"📋 View {len(headers)} headers from {endpoint}",
+                        expanded=False,
+                    ):
+                        for header in headers:
+                            st.code(header, language="text")
+        else:
+            st.markdown("*No backend-specific headers detected*")
         st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("</div>", unsafe_allow_html=True)

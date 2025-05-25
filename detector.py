@@ -195,11 +195,53 @@ class CloudProviderDetector:
             "twilio.com",
         }
 
-        # Cloud provider patterns for header and asset analysis
+        # Enhanced cloud provider patterns for comprehensive backend identification
         self.cloud_patterns = {
             "AWS": {
                 "cdn_domains": ["cloudfront.net", "amazonaws.com"],
-                "security_headers": ["x-amz-cf-id", "x-amz-request-id", "x-amz-cf-pop"],
+                "security_headers": [
+                    "x-amz-cf-id",
+                    "x-amz-request-id",
+                    "x-amz-cf-pop",
+                    "x-amz-id-2",
+                    "x-amz-server-side-encryption",
+                    "x-amz-version-id",
+                    "x-amz-delete-marker",
+                    "x-amz-expiration",
+                    "x-amz-restore",
+                    "x-amz-storage-class",
+                    "x-amz-website-redirect-location",
+                    "x-amz-replication-status",
+                ],
+                "backend_headers": [
+                    "x-amzn-requestid",
+                    "x-amzn-trace-id",
+                    "x-amzn-errortype",
+                    "x-amz-apigw-id",
+                    "x-amzn-remapped-content-length",
+                    "x-amzn-remapped-connection",
+                    "x-amzn-remapped-date",
+                    "x-amzn-remapped-server",
+                    "x-amz-target",
+                    "x-amz-user-agent",
+                    "x-amz-content-sha256",
+                    "x-amz-date",
+                ],
+                "server_headers": [
+                    "server: amazon",
+                    "server: awselb",
+                    "server: cloudfront",
+                    "server: aws",
+                    "server: amazonec2",
+                    "server: amazons3",
+                ],
+                "powered_by_headers": [
+                    "x-powered-by: aws",
+                    "x-powered-by: amazon",
+                    "x-powered-by: lambda",
+                    "x-powered-by: api gateway",
+                    "x-powered-by: elastic beanstalk",
+                ],
                 "asset_domains": ["s3.amazonaws.com", "s3-", ".s3.", "cloudfront.net"],
             },
             "GCP": {
@@ -212,6 +254,40 @@ class CloudProviderDetector:
                     "x-goog-generation",
                     "x-goog-metageneration",
                     "x-gfe-request-trace",
+                    "x-goog-hash",
+                    "x-goog-stored-content-encoding",
+                    "x-goog-stored-content-length",
+                    "x-goog-storage-class",
+                    "x-goog-component-count",
+                    "x-goog-expiration",
+                ],
+                "backend_headers": [
+                    "x-cloud-trace-context",
+                    "x-goog-request-id",
+                    "x-goog-api-client",
+                    "x-goog-user-project",
+                    "x-goog-quota-user",
+                    "x-goog-fieldmask",
+                    "x-gfe-response-code-details-trace",
+                    "x-goog-gfe-backend-request-cost",
+                    "x-goog-resource-state",
+                    "x-goog-safety-content-type",
+                    "x-goog-safety-encoding",
+                ],
+                "server_headers": [
+                    "server: google",
+                    "server: gfe",
+                    "server: google frontend",
+                    "server: gws",
+                    "server: sffe",
+                    "server: google-cloud-storage",
+                ],
+                "powered_by_headers": [
+                    "x-powered-by: google",
+                    "x-powered-by: gcp",
+                    "x-powered-by: app engine",
+                    "x-powered-by: cloud functions",
+                    "x-powered-by: cloud run",
                 ],
                 "asset_domains": [
                     "storage.googleapis.com",
@@ -225,6 +301,42 @@ class CloudProviderDetector:
                     "x-azure-ref",
                     "x-azure-request-id",
                     "x-ms-request-id",
+                    "x-ms-version",
+                    "x-ms-blob-type",
+                    "x-ms-lease-status",
+                    "x-ms-lease-state",
+                    "x-ms-server-encrypted",
+                    "x-ms-access-tier",
+                    "x-ms-creation-time",
+                ],
+                "backend_headers": [
+                    "x-ms-correlation-request-id",
+                    "x-ms-routing-request-id",
+                    "x-ms-ratelimit-remaining-subscription-reads",
+                    "x-ms-request-charge",
+                    "x-ms-servicebus-message-id",
+                    "x-ms-activity-id",
+                    "x-ms-client-request-id",
+                    "x-ms-return-client-request-id",
+                    "x-ms-continuation",
+                    "x-ms-documentdb-partitionkey",
+                    "x-ms-documentdb-collection-index-transformation-progress",
+                ],
+                "server_headers": [
+                    "server: microsoft",
+                    "server: azure",
+                    "server: iis",
+                    "server: microsoft-iis",
+                    "server: microsoft-httpapi",
+                    "server: cloudflare-nginx",
+                    "server: kestrel",
+                ],
+                "powered_by_headers": [
+                    "x-powered-by: azure",
+                    "x-powered-by: microsoft",
+                    "x-powered-by: asp.net",
+                    "x-powered-by: azure functions",
+                    "x-powered-by: azure app service",
                 ],
                 "asset_domains": [
                     "blob.core.windows.net",
@@ -799,7 +911,7 @@ class CloudProviderDetector:
         return backend_data
 
     async def analyze_xhr_headers(self, xhr_domains: List[str]) -> Dict[str, float]:
-        """Analyze headers specifically from XHR API endpoints."""
+        """Comprehensive header analysis from XHR API endpoints for backend identification."""
         scores = {provider: 0.0 for provider in self.cloud_patterns.keys()}
         header_evidence = []
 
@@ -810,35 +922,93 @@ class CloudProviderDetector:
             ]:  # Limit to first 5 to avoid too many requests
                 try:
                     api_url = f"https://{api_domain}"
-                    response = self.session.head(
-                        api_url, timeout=5, allow_redirects=True
-                    )
+
+                    # Try both HEAD and GET requests for comprehensive header analysis
+                    response = None
+                    try:
+                        response = self.session.head(
+                            api_url, timeout=5, allow_redirects=True
+                        )
+                    except:
+                        # If HEAD fails, try GET with small range
+                        try:
+                            headers = {"Range": "bytes=0-0"}
+                            response = self.session.get(
+                                api_url,
+                                timeout=5,
+                                allow_redirects=True,
+                                headers=headers,
+                            )
+                        except:
+                            continue
+
+                    if not response:
+                        continue
+
                     headers = response.headers
+                    found_evidence = {}
 
                     for provider, patterns in self.cloud_patterns.items():
+                        provider_headers = []
+                        provider_score = 0
+
+                        # Check security headers (40 points each)
                         if patterns.get("security_headers"):
-                            found_headers = []
                             for header_pattern in patterns["security_headers"]:
                                 for header_name, header_value in headers.items():
                                     if header_pattern.lower() in header_name.lower():
-                                        found_headers.append(
-                                            f"{header_name}: {header_value}"
+                                        provider_headers.append(
+                                            f"Security: {header_name}: {header_value}"
                                         )
-                                        scores[provider] += (
-                                            40.0  # High weight for XHR headers
-                                        )
+                                        provider_score += 40.0
 
-                            if found_headers:
-                                header_evidence.append(
-                                    {
-                                        "provider": provider,
-                                        "endpoint": api_domain,
-                                        "headers": found_headers,
-                                    }
-                                )
-                                print(
-                                    f"  🛡️ Found {provider} headers in {api_domain}: {', '.join(found_headers)}"
-                                )
+                        # Check backend-specific headers (50 points each - higher weight)
+                        if patterns.get("backend_headers"):
+                            for header_pattern in patterns["backend_headers"]:
+                                for header_name, header_value in headers.items():
+                                    if header_pattern.lower() in header_name.lower():
+                                        provider_headers.append(
+                                            f"Backend: {header_name}: {header_value}"
+                                        )
+                                        provider_score += 50.0
+
+                        # Check server headers (45 points each)
+                        if patterns.get("server_headers"):
+                            server_header = headers.get("Server", "").lower()
+                            for server_pattern in patterns["server_headers"]:
+                                if server_pattern.lower() in server_header:
+                                    provider_headers.append(f"Server: {server_header}")
+                                    provider_score += 45.0
+
+                        # Check powered-by headers (35 points each)
+                        if patterns.get("powered_by_headers"):
+                            powered_by = headers.get("X-Powered-By", "").lower()
+                            for powered_pattern in patterns["powered_by_headers"]:
+                                if powered_pattern.lower() in powered_by:
+                                    provider_headers.append(f"Powered-By: {powered_by}")
+                                    provider_score += 35.0
+
+                        # Check additional backend indicators
+                        self._check_additional_backend_indicators(
+                            headers, provider, provider_headers, provider_score
+                        )
+
+                        if provider_headers:
+                            scores[provider] += provider_score
+                            found_evidence[provider] = {
+                                "endpoint": api_domain,
+                                "headers": provider_headers,
+                                "score": provider_score,
+                            }
+                            print(
+                                f"  🛡️ Found {provider} backend headers in {api_domain}:"
+                            )
+                            for header in provider_headers:
+                                print(f"    • {header}")
+
+                    # Store evidence for all providers found
+                    for provider, evidence in found_evidence.items():
+                        header_evidence.append(evidence)
 
                 except Exception as e:
                     print(f"  ❌ Header check failed for {api_domain}: {e}")
@@ -850,6 +1020,67 @@ class CloudProviderDetector:
         # Store header evidence for later use in reason generation
         self._header_evidence = header_evidence
         return scores
+
+    def _check_additional_backend_indicators(
+        self,
+        headers: dict,
+        provider: str,
+        provider_headers: list,
+        provider_score: float,
+    ):
+        """Check for additional backend indicators in headers."""
+
+        # Check for cloud-specific response patterns
+        if provider == "AWS":
+            # Check for API Gateway patterns
+            if "x-amzn-requestid" in headers or "x-amz-apigw-id" in headers:
+                provider_headers.append("Backend: AWS API Gateway detected")
+                provider_score += 55.0
+
+            # Check for Lambda patterns
+            if "x-amzn-trace-id" in headers:
+                provider_headers.append("Backend: AWS Lambda/X-Ray tracing detected")
+                provider_score += 55.0
+
+            # Check for ELB patterns
+            if any("awselb" in h.lower() for h in headers.values()):
+                provider_headers.append("Backend: AWS ELB detected")
+                provider_score += 50.0
+
+        elif provider == "GCP":
+            # Check for Cloud Functions/Cloud Run patterns
+            if "x-cloud-trace-context" in headers:
+                provider_headers.append("Backend: GCP Cloud Trace detected")
+                provider_score += 55.0
+
+            # Check for Google Frontend patterns
+            if "x-gfe-request-trace" in headers:
+                provider_headers.append("Backend: Google Frontend (GFE) detected")
+                provider_score += 50.0
+
+            # Check for App Engine patterns
+            if any("appengine" in h.lower() for h in headers.values()):
+                provider_headers.append("Backend: Google App Engine detected")
+                provider_score += 55.0
+
+        elif provider == "Azure":
+            # Check for Azure Functions patterns
+            if (
+                "x-ms-request-id" in headers
+                and "x-ms-correlation-request-id" in headers
+            ):
+                provider_headers.append("Backend: Azure Functions/App Service detected")
+                provider_score += 55.0
+
+            # Check for Azure API Management
+            if "x-ms-ratelimit-remaining-subscription-reads" in headers:
+                provider_headers.append("Backend: Azure API Management detected")
+                provider_score += 50.0
+
+            # Check for Cosmos DB patterns
+            if "x-ms-documentdb-partitionkey" in headers:
+                provider_headers.append("Backend: Azure Cosmos DB detected")
+                provider_score += 55.0
 
     async def analyze_website(self, url: str) -> Dict[str, any]:
         """Analyze website focusing exclusively on XHR/API calls from app subdomains with comprehensive IP range matching."""
