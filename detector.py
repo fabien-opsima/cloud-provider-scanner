@@ -358,17 +358,22 @@ class CloudProviderDetector:
         return None
 
     async def discover_app_subdomains_and_apis(self, url: str) -> Dict[str, List[str]]:
-        """Discover app subdomains and their API endpoints through deep exploration."""
+        """Discover app subdomains and their API endpoints through comprehensive deep exploration."""
         backend_data = {
             "xhr_api_calls": [],
             "app_subdomains": [],
             "cloud_provider_domains": [],
             "api_ips": [],
             "cloud_domain_ips": [],
+            "subdomain_details": {},  # Track which subdomain found which APIs
+            "processing_log": [],  # For real-time display
         }
 
         # Check if browsers are available
         if not PLAYWRIGHT_AVAILABLE or not BROWSERS_AVAILABLE:
+            backend_data["processing_log"].append(
+                "❌ Browser not available - cannot perform deep XHR analysis"
+            )
             print("Browser not available - cannot perform deep XHR analysis")
             return backend_data
 
@@ -381,15 +386,17 @@ class CloudProviderDetector:
                 try:
                     browser = await p.chromium.launch(headless=self.headless)
                 except Exception:
+                    backend_data["processing_log"].append("❌ Failed to launch browser")
                     return backend_data
 
                 context = await browser.new_context()
                 page = await context.new_page()
 
-                # Track all XHR/fetch requests
+                # Track all XHR/fetch requests with more detail
                 xhr_calls = set()
                 cloud_calls = set()
                 app_domains = set()
+                subdomain_xhr_map = {}  # Track which subdomain found which XHR calls
 
                 def handle_request(request):
                     try:
@@ -404,6 +411,9 @@ class CloudProviderDetector:
                             if request_domain and self.is_advertising_service(
                                 request_domain
                             ):
+                                backend_data["processing_log"].append(
+                                    f"  🚫 Skipping advertising service: {request_domain}"
+                                )
                                 print(
                                     f"  🚫 Skipping advertising service: {request_domain}"
                                 )
@@ -412,7 +422,22 @@ class CloudProviderDetector:
                             # Check if it's a same-domain API endpoint
                             if request_domain and base_domain in request_domain:
                                 xhr_calls.add(request_domain)
+                                backend_data["processing_log"].append(
+                                    f"  🔍 XHR to same-domain API: {request_domain}"
+                                )
                                 print(f"  🔍 XHR to same-domain API: {request_domain}")
+
+                                # Track which page/subdomain found this XHR call
+                                current_page_domain = (
+                                    urlparse(page.url).netloc
+                                    if hasattr(page, "url")
+                                    else "main"
+                                )
+                                if current_page_domain not in subdomain_xhr_map:
+                                    subdomain_xhr_map[current_page_domain] = set()
+                                subdomain_xhr_map[current_page_domain].add(
+                                    request_domain
+                                )
 
                             # Check if it's a direct cloud provider domain call
                             elif request_domain:
@@ -431,9 +456,13 @@ class CloudProviderDetector:
                                     cloud_calls.add(
                                         (request_domain, "AWS", service_type)
                                     )
+                                    backend_data["processing_log"].append(
+                                        f"  ☁️ XHR to AWS {service_type}: {request_domain}"
+                                    )
                                     print(
                                         f"  ☁️ XHR to AWS {service_type}: {request_domain}"
                                     )
+
                                 # Check for GCP services (excluding Maps API, Fonts API, and advertising)
                                 elif any(
                                     pattern in request_domain.lower()
@@ -459,6 +488,9 @@ class CloudProviderDetector:
                                         cloud_calls.add(
                                             (request_domain, "GCP", service_type)
                                         )
+                                        backend_data["processing_log"].append(
+                                            f"  ☁️ XHR to GCP {service_type}: {request_domain}"
+                                        )
                                         print(
                                             f"  ☁️ XHR to GCP {service_type}: {request_domain}"
                                         )
@@ -467,13 +499,20 @@ class CloudProviderDetector:
                                             "fonts.googleapis.com"
                                             in request_domain.lower()
                                         ):
+                                            backend_data["processing_log"].append(
+                                                f"  🔤 Skipping Google Fonts API: {request_domain}"
+                                            )
                                             print(
                                                 f"  🔤 Skipping Google Fonts API: {request_domain}"
                                             )
                                         else:
+                                            backend_data["processing_log"].append(
+                                                f"  🗺️ Skipping Google Maps API: {request_domain}"
+                                            )
                                             print(
                                                 f"  🗺️ Skipping Google Maps API: {request_domain}"
                                             )
+
                                 # Check for Azure services
                                 elif any(
                                     pattern in request_domain.lower()
@@ -489,6 +528,9 @@ class CloudProviderDetector:
                                     cloud_calls.add(
                                         (request_domain, "Azure", service_type)
                                     )
+                                    backend_data["processing_log"].append(
+                                        f"  ☁️ XHR to Azure {service_type}: {request_domain}"
+                                    )
                                     print(
                                         f"  ☁️ XHR to Azure {service_type}: {request_domain}"
                                     )
@@ -498,12 +540,45 @@ class CloudProviderDetector:
 
                 page.on("request", handle_request)
 
-                # 1. Start with the main page
+                # 1. Start with the main page - spend more time here
+                backend_data["processing_log"].append(f"  📄 Loading main page: {url}")
                 print(f"  📄 Loading main page: {url}")
-                await page.goto(url, wait_until="networkidle", timeout=15000)
-                await page.wait_for_timeout(3000)  # Wait for initial API calls
+                await page.goto(url, wait_until="networkidle", timeout=20000)
+                await page.wait_for_timeout(5000)  # Wait longer for initial API calls
 
-                # 2. Look for app subdomain links on the main page
+                # Try to trigger more interactions on main page
+                try:
+                    await page.evaluate("""() => {
+                        // Scroll to trigger lazy loading
+                        window.scrollTo(0, document.body.scrollHeight);
+                        
+                        // Try to click some interactive elements
+                        const buttons = document.querySelectorAll('button, [role="button"], .btn');
+                        for (let i = 0; i < Math.min(5, buttons.length); i++) {
+                            if (buttons[i].offsetParent !== null) {
+                                buttons[i].click();
+                            }
+                        }
+                        
+                        // Try to hover over menu items that might trigger API calls
+                        const menuItems = document.querySelectorAll('[class*="menu"], [class*="nav"], [class*="dropdown"]');
+                        for (let i = 0; i < Math.min(3, menuItems.length); i++) {
+                            if (menuItems[i].offsetParent !== null) {
+                                menuItems[i].dispatchEvent(new MouseEvent('mouseenter', {bubbles: true}));
+                            }
+                        }
+                    }""")
+                    await page.wait_for_timeout(3000)
+                except:
+                    pass
+
+                # 2. Comprehensive subdomain discovery - be much more thorough
+                backend_data["processing_log"].append(
+                    "  🔗 Discovering app subdomains..."
+                )
+                print("  🔗 Discovering app subdomains...")
+
+                # Find app links on the main page
                 app_links = await page.evaluate("""() => {
                     const links = [];
                     const allLinks = Array.from(document.querySelectorAll('a[href]'));
@@ -517,10 +592,24 @@ class CloudProviderDetector:
                             href.includes('console.') ||
                             href.includes('admin.') ||
                             href.includes('portal.') ||
+                            href.includes('account.') ||
+                            href.includes('signin.') ||
+                            href.includes('login.') ||
+                            href.includes('my.') ||
+                            href.includes('client.') ||
+                            href.includes('api.') ||
+                            href.includes('manage.') ||
+                            href.includes('control.') ||
+                            href.includes('studio.') ||
+                            href.includes('web.') ||
+                            href.includes('secure.') ||
                             link.textContent.toLowerCase().includes('app') ||
                             link.textContent.toLowerCase().includes('dashboard') ||
                             link.textContent.toLowerCase().includes('login') ||
-                            link.textContent.toLowerCase().includes('sign in')
+                            link.textContent.toLowerCase().includes('sign in') ||
+                            link.textContent.toLowerCase().includes('get started') ||
+                            link.textContent.toLowerCase().includes('console') ||
+                            link.textContent.toLowerCase().includes('portal')
                         )) {
                             links.push(href);
                         }
@@ -528,9 +617,7 @@ class CloudProviderDetector:
                     return [...new Set(links)];
                 }""")
 
-                print(f"  🔗 Found {len(app_links)} potential app links")
-
-                # 3. Also try common app subdomain patterns
+                # Comprehensive list of common app subdomain patterns
                 common_app_subdomains = [
                     f"https://app.{base_domain}",
                     f"https://application.{base_domain}",
@@ -540,56 +627,145 @@ class CloudProviderDetector:
                     f"https://portal.{base_domain}",
                     f"https://my.{base_domain}",
                     f"https://client.{base_domain}",
+                    f"https://account.{base_domain}",
+                    f"https://accounts.{base_domain}",
+                    f"https://login.{base_domain}",
+                    f"https://signin.{base_domain}",
+                    f"https://auth.{base_domain}",
+                    f"https://api.{base_domain}",
+                    f"https://manage.{base_domain}",
+                    f"https://management.{base_domain}",
+                    f"https://control.{base_domain}",
+                    f"https://studio.{base_domain}",
+                    f"https://web.{base_domain}",
+                    f"https://secure.{base_domain}",
+                    f"https://admin-{base_domain.replace('.', '-')}.{base_domain}",
+                    f"https://app-{base_domain.replace('.', '-')}.{base_domain}",
+                    f"https://panel.{base_domain}",
+                    f"https://cpanel.{base_domain}",
+                    f"https://members.{base_domain}",
+                    f"https://user.{base_domain}",
+                    f"https://users.{base_domain}",
                 ]
 
                 all_app_urls = list(set(app_links + common_app_subdomains))
+                backend_data["processing_log"].append(
+                    f"  📋 Found {len(app_links)} potential app links, testing {len(all_app_urls)} total URLs"
+                )
+                print(
+                    f"  📋 Found {len(app_links)} potential app links, testing {len(all_app_urls)} total URLs"
+                )
 
-                # 4. Navigate to each app subdomain/page and collect API calls
-                for app_url in all_app_urls[
-                    :5
-                ]:  # Limit to first 5 to avoid too many requests
+                # 3. Navigate to each app subdomain/page and collect API calls - spend more time on each
+                successful_subdomains = []
+                for i, app_url in enumerate(
+                    all_app_urls[:10]
+                ):  # Increase limit to 10 for more thorough analysis
                     try:
-                        print(f"  🚀 Exploring app page: {app_url}")
+                        backend_data["processing_log"].append(
+                            f"  🚀 [{i + 1}/{min(10, len(all_app_urls))}] Exploring: {app_url}"
+                        )
+                        print(
+                            f"  🚀 [{i + 1}/{min(10, len(all_app_urls))}] Exploring: {app_url}"
+                        )
+
                         await page.goto(
-                            app_url, wait_until="networkidle", timeout=10000
+                            app_url, wait_until="networkidle", timeout=15000
                         )
 
                         # Wait longer for SPAs to load and make API calls
-                        await page.wait_for_timeout(5000)
+                        await page.wait_for_timeout(7000)  # Increased wait time
 
-                        # Try to interact with the page to trigger more API calls
+                        # More comprehensive interaction to trigger API calls
                         try:
-                            # Click on common interactive elements
                             await page.evaluate("""() => {
+                                // Scroll to trigger lazy loading and API calls
+                                for (let i = 0; i < 3; i++) {
+                                    window.scrollTo(0, (i + 1) * window.innerHeight);
+                                    setTimeout(() => {}, 1000);
+                                }
+                                
                                 // Try to click buttons that might trigger API calls
-                                const buttons = document.querySelectorAll('button, [role="button"], .btn');
-                                for (let i = 0; i < Math.min(3, buttons.length); i++) {
-                                    if (buttons[i].offsetParent !== null) { // visible
-                                        buttons[i].click();
+                                const buttons = document.querySelectorAll('button, [role="button"], .btn, input[type="button"], input[type="submit"]');
+                                for (let i = 0; i < Math.min(5, buttons.length); i++) {
+                                    if (buttons[i].offsetParent !== null && !buttons[i].disabled) {
+                                        try {
+                                            buttons[i].click();
+                                        } catch (e) {}
+                                    }
+                                }
+                                
+                                // Try to focus on input fields (might trigger autocomplete APIs)
+                                const inputs = document.querySelectorAll('input[type="text"], input[type="email"], input[type="search"], textarea');
+                                for (let i = 0; i < Math.min(3, inputs.length); i++) {
+                                    if (inputs[i].offsetParent !== null) {
+                                        try {
+                                            inputs[i].focus();
+                                            inputs[i].value = "test";
+                                            inputs[i].dispatchEvent(new Event('input', {bubbles: true}));
+                                        } catch (e) {}
+                                    }
+                                }
+                                
+                                // Try to trigger dropdown menus and navigation
+                                const dropdowns = document.querySelectorAll('[class*="dropdown"], [class*="menu"], [data-toggle*="dropdown"]');
+                                for (let i = 0; i < Math.min(3, dropdowns.length); i++) {
+                                    if (dropdowns[i].offsetParent !== null) {
+                                        try {
+                                            dropdowns[i].click();
+                                            dropdowns[i].dispatchEvent(new MouseEvent('mouseenter', {bubbles: true}));
+                                        } catch (e) {}
                                     }
                                 }
                             }""")
-                            await page.wait_for_timeout(2000)
+                            await page.wait_for_timeout(
+                                4000
+                            )  # Wait for triggered API calls
                         except:
                             pass
 
                         app_domain = urlparse(app_url).netloc
                         if base_domain in app_domain:
                             app_domains.add(app_domain)
+                            successful_subdomains.append(app_domain)
+                            backend_data["processing_log"].append(
+                                f"    ✅ Successfully explored {app_domain}"
+                            )
+                            print(f"    ✅ Successfully explored {app_domain}")
 
                     except Exception as e:
-                        print(f"  ❌ Failed to load {app_url}: {e}")
+                        backend_data["processing_log"].append(
+                            f"    ❌ Failed to load {app_url}: {str(e)[:100]}"
+                        )
+                        print(f"    ❌ Failed to load {app_url}: {e}")
                         continue
 
-                # 5. Collect results
+                # 4. Store subdomain details for better reporting
+                for subdomain, xhr_set in subdomain_xhr_map.items():
+                    backend_data["subdomain_details"][subdomain] = {
+                        "xhr_calls": list(xhr_set),
+                        "xhr_count": len(xhr_set),
+                    }
+
+                # 5. Collect results with more detail
                 backend_data["xhr_api_calls"] = list(xhr_calls)
                 backend_data["app_subdomains"] = list(app_domains)
                 backend_data["cloud_provider_domains"] = list(cloud_calls)
 
-                # Resolve API IPs
+                # Resolve API IPs with more comprehensive logging
+                backend_data["processing_log"].append(
+                    f"  🎯 Resolving IPs for {len(backend_data['xhr_api_calls'])} XHR APIs..."
+                )
+                print(
+                    f"  🎯 Resolving IPs for {len(backend_data['xhr_api_calls'])} XHR APIs..."
+                )
+
                 for api_domain in backend_data["xhr_api_calls"]:
                     ips = self.resolve_domain_to_ips(api_domain)
                     backend_data["api_ips"].extend(ips)
+                    backend_data["processing_log"].append(
+                        f"    📍 {api_domain} → {', '.join(ips[:3])}"
+                    )
 
                 # Resolve cloud provider domain IPs
                 for domain_provider_tuple in backend_data["cloud_provider_domains"]:
@@ -601,11 +777,17 @@ class CloudProviderDetector:
                     ips = self.resolve_domain_to_ips(domain)
                     backend_data["cloud_domain_ips"].extend(ips)
 
+                backend_data["processing_log"].append(
+                    f"  ✅ Discovery complete: {len(backend_data['xhr_api_calls'])} XHR APIs, {len(backend_data['cloud_provider_domains'])} cloud calls from {len(successful_subdomains)} subdomains"
+                )
                 print(
-                    f"  ✅ Discovery complete: {len(backend_data['xhr_api_calls'])} XHR APIs, {len(backend_data['cloud_provider_domains'])} cloud calls"
+                    f"  ✅ Discovery complete: {len(backend_data['xhr_api_calls'])} XHR APIs, {len(backend_data['cloud_provider_domains'])} cloud calls from {len(successful_subdomains)} subdomains"
                 )
 
         except Exception as e:
+            backend_data["processing_log"].append(
+                f"  ❌ App discovery failed: {str(e)}"
+            )
             print(f"  ❌ App discovery failed: {e}")
         finally:
             if browser:
@@ -670,7 +852,7 @@ class CloudProviderDetector:
         return scores
 
     async def analyze_website(self, url: str) -> Dict[str, any]:
-        """Analyze website focusing exclusively on XHR/API calls from app subdomains."""
+        """Analyze website focusing exclusively on XHR/API calls from app subdomains with comprehensive IP range matching."""
         print(f"🔍 Analyzing backend infrastructure for: {url}")
 
         result = {
@@ -680,6 +862,7 @@ class CloudProviderDetector:
             "primary_reason": "No backend API endpoints detected",
             "evidence": [],
             "details": {},
+            "ip_analysis": {},  # Detailed IP analysis for each XHR call
         }
 
         if not url.startswith(("http://", "https://")):
@@ -695,35 +878,59 @@ class CloudProviderDetector:
             backend_data = await self.discover_app_subdomains_and_apis(url)
             result["details"]["backend_data"] = backend_data
 
-            # 1a. XHR API IP Range Analysis (80 points - primary signal)
+            # 1a. Comprehensive XHR API IP Range Analysis - check ALL IPs for precision
             backend_provider = None
             backend_match = None
+            ip_matches = []
+            all_ip_details = {}
 
             if backend_data["api_ips"]:
                 print(
-                    f"  🎯 Analyzing {len(backend_data['api_ips'])} API endpoint IPs..."
+                    f"  🎯 Analyzing {len(backend_data['api_ips'])} API endpoint IPs for cloud provider ranges..."
                 )
+
+                # Check every single IP against cloud ranges
                 for ip in backend_data["api_ips"]:
                     ip_info = self.check_ip_against_cloud_ranges(ip)
+
+                    # Find which API domain this IP belongs to
+                    api_domain = "unknown API endpoint"
+                    for api_domain_candidate in backend_data["xhr_api_calls"]:
+                        api_ips = self.resolve_domain_to_ips(api_domain_candidate)
+                        if ip in api_ips:
+                            api_domain = api_domain_candidate
+                            break
+
+                    # Store detailed IP analysis for reporting
+                    all_ip_details[ip] = {
+                        "api_domain": api_domain,
+                        "cloud_match": ip_info,
+                        "is_cloud_ip": ip_info is not None,
+                    }
+
                     if ip_info:
                         provider = ip_info["provider"]
-                        provider_scores[provider] += 80.0
+                        ip_matches.append(
+                            {
+                                "ip": ip,
+                                "api_domain": api_domain,
+                                "provider": provider,
+                                "ip_range": ip_info["range"],
+                                "network_name": ip_info["network_name"],
+                            }
+                        )
+
+                        # High confidence score for IP range matches (90 points for precision)
+                        provider_scores[provider] += 90.0
                         backend_provider = provider
                         backend_match = ip
 
-                        # Find which API domain this IP belongs to
-                        api_domain = "unknown API endpoint"
-                        for api_domain_candidate in backend_data["xhr_api_calls"]:
-                            api_ips = self.resolve_domain_to_ips(api_domain_candidate)
-                            if ip in api_ips:
-                                api_domain = api_domain_candidate
-                                break
-
                         evidence_list.append(
                             {
-                                "method": "XHR API Endpoint",
+                                "method": "XHR API Endpoint IP Range",
                                 "provider": provider,
                                 "evidence": f"XHR API {api_domain} (IP {ip}) matches {provider} range {ip_info['range']}",
+                                "confidence": "High",
                                 "details": {
                                     "endpoint_url": api_domain,
                                     "ip_address": ip,
@@ -733,9 +940,29 @@ class CloudProviderDetector:
                             }
                         )
                         print(
-                            f"  ✅ Strong match: {api_domain} → {provider} (IP {ip} in range {ip_info['range']})"
+                            f"  ✅ CLOUD MATCH: {api_domain} → {provider} (IP {ip} in {ip_info['range']})"
                         )
-                        break  # Only count one match for API endpoints
+                    else:
+                        print(
+                            f"  ❌ No cloud match: {api_domain} → {ip} (not in known cloud ranges)"
+                        )
+
+                # Store comprehensive IP analysis
+                result["ip_analysis"] = {
+                    "total_ips_checked": len(backend_data["api_ips"]),
+                    "cloud_matches": len(ip_matches),
+                    "ip_details": all_ip_details,
+                    "cloud_ip_matches": ip_matches,
+                }
+
+                if ip_matches:
+                    print(
+                        f"  📊 IP Analysis Summary: {len(ip_matches)}/{len(backend_data['api_ips'])} IPs matched cloud ranges"
+                    )
+                else:
+                    print(
+                        f"  📊 IP Analysis Summary: 0/{len(backend_data['api_ips'])} IPs matched cloud ranges - no cloud backend detected"
+                    )
 
             # 1b. Direct cloud provider domain calls from XHR (60 points)
             cloud_provider_calls = backend_data.get("cloud_provider_domains", [])
@@ -820,14 +1047,39 @@ class CloudProviderDetector:
                                 }
                             )
 
-            # Determine the primary provider based on highest score
+            # Determine the primary provider based on highest score with high confidence threshold
             if provider_scores:
                 primary_provider = max(provider_scores, key=provider_scores.get)
                 max_score = provider_scores[primary_provider]
 
-                # Simple classification: if we have any evidence, use the highest scoring provider
-                if max_score > 0:
+                # HIGH PRECISION APPROACH: Only classify if we have strong evidence
+                # We require IP range matches for high confidence classification
+                has_ip_evidence = any(
+                    e["method"] == "XHR API Endpoint IP Range"
+                    and e["provider"] == primary_provider
+                    for e in evidence_list
+                )
+                has_direct_cloud_calls = any(
+                    e["method"] == "Direct Cloud XHR Call"
+                    and e["provider"] == primary_provider
+                    for e in evidence_list
+                )
+
+                # Calculate confidence score based on evidence strength
+                confidence_score = 0
+                if has_ip_evidence:
+                    confidence_score = 95  # Very high confidence for IP range matches
+                elif has_direct_cloud_calls:
+                    confidence_score = 85  # High confidence for direct cloud API calls
+                elif max_score > 0:
+                    confidence_score = max(
+                        20, min(60, max_score)
+                    )  # Medium confidence for other evidence
+
+                # Only classify with high confidence (we prioritize precision over recall)
+                if confidence_score >= 80:  # High confidence threshold
                     result["primary_cloud_provider"] = primary_provider
+                    result["confidence_score"] = confidence_score
 
                     # Determine primary reason based on evidence
                     primary_reason, main_evidence = self._determine_primary_reason_xhr(
@@ -837,28 +1089,65 @@ class CloudProviderDetector:
                     result["evidence"] = [
                         e for e in evidence_list if e["provider"] == primary_provider
                     ]
+
+                    print(
+                        f"  ✅ HIGH CONFIDENCE DETECTION: {primary_provider} ({confidence_score}% confidence)"
+                    )
+
+                elif max_score > 0:
+                    # We have some evidence but not high confidence
+                    result["primary_cloud_provider"] = "Insufficient Data"
+                    result["confidence_score"] = confidence_score
+                    result["primary_reason"] = (
+                        f"Evidence found for {primary_provider} but confidence too low ({confidence_score}%) - requires IP range match or direct cloud calls for high-precision detection"
+                    )
+                    result["evidence"] = (
+                        evidence_list  # Show all evidence but don't classify
+                    )
+
+                    print(
+                        f"  ⚠️ LOW CONFIDENCE: Found {primary_provider} evidence but only {confidence_score}% confidence"
+                    )
+
                 else:
                     # No evidence found at all
                     result["primary_cloud_provider"] = "Insufficient Data"
+                    result["confidence_score"] = 0
                     result["primary_reason"] = (
                         "No XHR API evidence found for classification"
                     )
 
+                    print("  ❌ No evidence found")
+
                 result["details"]["provider_scores"] = provider_scores
                 result["details"]["all_evidence"] = evidence_list
+                result["details"]["evidence_summary"] = {
+                    "has_ip_evidence": has_ip_evidence,
+                    "has_direct_cloud_calls": has_direct_cloud_calls,
+                    "max_score": max_score,
+                    "confidence_threshold_met": confidence_score >= 80,
+                }
 
-                # Summary stats
+                # Detailed summary stats
                 classified_as = result["primary_cloud_provider"]
-                print(f"  📊 Analysis complete: {classified_as}")
+                confidence = result["confidence_score"]
+                print(
+                    f"  📊 Analysis complete: {classified_as} ({confidence}% confidence)"
+                )
                 print(f"    - XHR APIs found: {len(backend_data['xhr_api_calls'])}")
                 print(f"    - App subdomains: {len(backend_data['app_subdomains'])}")
                 print(
                     f"    - Cloud XHR calls: {len(backend_data['cloud_provider_domains'])}"
                 )
+                if result.get("ip_analysis"):
+                    print(
+                        f"    - IP matches: {result['ip_analysis'].get('cloud_matches', 0)}/{result['ip_analysis'].get('total_ips_checked', 0)}"
+                    )
 
             else:
                 # No evidence found at all
                 result["primary_cloud_provider"] = "Insufficient Data"
+                result["confidence_score"] = 0
                 result["primary_reason"] = (
                     "No XHR API endpoints found in app subdomains - cannot determine cloud provider"
                 )

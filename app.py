@@ -313,7 +313,7 @@ def test_accuracy_interface(headless_mode):
 
 
 def process_domains(df: pd.DataFrame, domain_column: str, headless_mode: bool):
-    """Process domains and display results."""
+    """Process domains and display results with comprehensive real-time information."""
     # Extract URLs
     urls = df[domain_column].dropna().tolist()
 
@@ -321,11 +321,36 @@ def process_domains(df: pd.DataFrame, domain_column: str, headless_mode: bool):
         st.error("❌ No valid URLs found in the specified column.")
         return
 
+    # Main header with summary at the top
     st.subheader(f"🔍 Analyzing {len(urls)} domains...")
+
+    # Create summary section at the top (will be updated in real-time)
+    summary_container = st.container()
+    with summary_container:
+        st.markdown("### 📊 **Analysis Summary** (Updated in Real-Time)")
+        summary_col1, summary_col2, summary_col3, summary_col4 = st.columns(4)
+
+        # Summary metrics placeholders
+        completed_metric = summary_col1.empty()
+        aws_metric = summary_col2.empty()
+        gcp_metric = summary_col3.empty()
+        azure_metric = summary_col4.empty()
+
+        st.markdown("---")
 
     # Progress tracking
     progress_bar = st.progress(0)
     status_text = st.empty()
+
+    # Real-time processing details section
+    st.markdown("### 🔄 **Live Processing Details**")
+    current_analysis_container = st.container()
+    processing_details = st.expander(
+        "🔍 **Current Domain Analysis Details**", expanded=True
+    )
+
+    # Results section - newest at top
+    st.markdown("### 📈 **Results** (Most Recent First)")
     results_container = st.empty()
 
     # Run analysis
@@ -335,40 +360,124 @@ def process_domains(df: pd.DataFrame, domain_column: str, headless_mode: bool):
 
         async def run_analysis():
             results = []
+            provider_counts = {
+                "AWS": 0,
+                "GCP": 0,
+                "Azure": 0,
+                "Other": 0,
+                "Insufficient Data": 0,
+                "Error": 0,
+            }
+
             for i, url in enumerate(urls):
                 status_text.text(f"🔍 Analyzing {i + 1}/{len(urls)}: {url}")
                 progress_bar.progress((i + 1) / len(urls))
+
+                # Update summary metrics in real-time
+                completed_metric.metric("✅ Completed", f"{i}/{len(urls)}")
+                aws_metric.metric("🟧 AWS", provider_counts["AWS"])
+                gcp_metric.metric("🔵 GCP", provider_counts["GCP"])
+                azure_metric.metric("🔷 Azure", provider_counts["Azure"])
+
+                with current_analysis_container:
+                    st.info(
+                        f"🔄 **Currently analyzing:** `{url}` ({i + 1}/{len(urls)})"
+                    )
 
                 try:
                     result = await detector.analyze_website(url)
                     results.append(result)
 
-                    # Print result to console for real-time feedback
+                    # Update provider counts
                     provider = result["primary_cloud_provider"]
-                    print(f"✅ {url} → {provider}")
+                    if provider in provider_counts:
+                        provider_counts[provider] += 1
+
+                    # Show detailed processing information
+                    backend_data = result.get("details", {}).get("backend_data", {})
+                    ip_analysis = result.get("ip_analysis", {})
+                    confidence = result.get("confidence_score", 0)
+
+                    with processing_details:
+                        st.success(
+                            f"✅ **{url}** → **{provider}** ({confidence}% confidence)"
+                        )
+
+                        # Show discovered subdomains and XHR calls
+                        if backend_data.get("app_subdomains"):
+                            st.write(
+                                f"🏢 **App Subdomains Found:** {', '.join(backend_data['app_subdomains'])}"
+                            )
+
+                        if backend_data.get("xhr_api_calls"):
+                            st.write(
+                                f"🔗 **XHR API Calls:** {', '.join(backend_data['xhr_api_calls'][:5])}"
+                            )
+                            if len(backend_data["xhr_api_calls"]) > 5:
+                                st.write(
+                                    f"   *(and {len(backend_data['xhr_api_calls']) - 5} more)*"
+                                )
+
+                        # Show IP analysis details
+                        if ip_analysis.get("cloud_ip_matches"):
+                            st.write("📍 **Cloud IP Matches:**")
+                            for match in ip_analysis["cloud_ip_matches"][:3]:
+                                st.write(
+                                    f"   • `{match['api_domain']}` → {match['provider']} (IP: {match['ip']} in {match['ip_range']})"
+                                )
+                        elif ip_analysis.get("total_ips_checked", 0) > 0:
+                            st.write(
+                                f"🔍 **IP Analysis:** {ip_analysis['total_ips_checked']} IPs checked, no cloud matches found"
+                            )
+
+                        # Show direct cloud calls
+                        if backend_data.get("cloud_provider_domains"):
+                            st.write(
+                                f"☁️ **Direct Cloud Calls:** {len(backend_data['cloud_provider_domains'])} found"
+                            )
+                            for call in backend_data["cloud_provider_domains"][:3]:
+                                if isinstance(call, tuple) and len(call) >= 2:
+                                    st.write(f"   • {call[0]} → {call[1]}")
+
+                        st.markdown("---")
+
+                    # Print result to console for real-time feedback
+                    print(f"✅ {url} → {provider} ({confidence}% confidence)")
 
                     # Update status with result
                     status_text.text(
                         f"✅ {i + 1}/{len(urls)} complete: {url} → {provider}"
                     )
 
-                    # Update results display in real-time
-                    display_results(results, results_container)
+                    # Update results display in real-time (newest first)
+                    display_results(list(reversed(results)), results_container)
 
                 except Exception as e:
                     error_msg = f"Error analyzing {url}: {e}"
-                    st.error(error_msg)
+                    provider_counts["Error"] += 1
+
+                    with processing_details:
+                        st.error(f"❌ **{url}** → **Error:** {str(e)}")
+                        st.markdown("---")
+
                     print(f"❌ {url} → Error: {e}")
                     status_text.text(f"❌ {i + 1}/{len(urls)} failed: {url}")
                     results.append(
                         {
                             "url": url,
                             "primary_cloud_provider": "Error",
+                            "confidence_score": 0,
                             "details": {"error": str(e)},
                         }
                     )
-                    # Update display even with errors
-                    display_results(results, results_container)
+                    # Update display even with errors (newest first)
+                    display_results(list(reversed(results)), results_container)
+
+            # Final summary update
+            completed_metric.metric("✅ Completed", f"{len(urls)}/{len(urls)}")
+            aws_metric.metric("🟧 AWS", provider_counts["AWS"])
+            gcp_metric.metric("🔵 GCP", provider_counts["GCP"])
+            azure_metric.metric("🔷 Azure", provider_counts["Azure"])
 
             return results
 
@@ -378,9 +487,12 @@ def process_domains(df: pd.DataFrame, domain_column: str, headless_mode: bool):
         # Clear progress indicators
         progress_bar.empty()
         status_text.empty()
+        current_analysis_container.empty()
 
         # Display final results
-        display_final_results(results, df, domain_column)
+        with st.container():
+            st.markdown("### 🎯 **Final Analysis Results**")
+            display_final_results(results, df, domain_column)
 
     except Exception as e:
         st.error(f"❌ Analysis failed: {str(e)}")
@@ -644,65 +756,111 @@ def run_accuracy_test(headless_mode: bool):
 
 
 def display_results(results: List[Dict], container):
-    """Display analysis results using individual cards for better readability."""
+    """Display enhanced analysis results with comprehensive details about XHR calls and IP analysis."""
     if not results:
         return
 
     with container.container():
         st.subheader(f"📊 Results ({len(results)} analyzed)")
 
-        # Summary metrics first
+        # Enhanced summary metrics
         total = len(results)
         providers = {}
-        correct_count = 0
+        high_confidence_count = 0
         total_confidence = 0
+        total_xhr_calls = 0
+        total_ip_matches = 0
+        total_subdomains = 0
 
         for result in results:
             provider = result.get("primary_cloud_provider", "Unknown")
             providers[provider] = providers.get(provider, 0) + 1
-            if result.get("correct", False):
-                correct_count += 1
+            confidence = result.get("confidence_score", 0)
+            if confidence >= 80:
+                high_confidence_count += 1
+            total_confidence += confidence
 
-        # Calculate percentage of correct predictions instead of confidence
-        accuracy_percent = (correct_count / total * 100) if total > 0 else 0
+            # Extract enhanced metrics
+            backend_data = result.get("details", {}).get("backend_data", {})
+            ip_analysis = result.get("ip_analysis", {})
+            total_xhr_calls += len(backend_data.get("xhr_api_calls", []))
+            total_ip_matches += ip_analysis.get("cloud_matches", 0)
+            total_subdomains += len(backend_data.get("app_subdomains", []))
 
-        col1, col2, col3, col4 = st.columns(4)
+        avg_confidence = (total_confidence / total) if total > 0 else 0
+
+        # Enhanced metrics display
+        col1, col2, col3, col4, col5 = st.columns(5)
         with col1:
-            st.metric("Analyzed", total)
+            st.metric("📊 Analyzed", total)
         with col2:
-            st.metric("Accuracy", f"{accuracy_percent:.1f}%")
+            st.metric("🎯 High Confidence", f"{high_confidence_count}/{total}")
         with col3:
-            st.metric("Correct", f"{correct_count}")
+            st.metric("📈 Avg Confidence", f"{avg_confidence:.1f}%")
         with col4:
-            st.metric(
-                "Providers Found", len([p for p in providers.keys() if p != "Error"])
-            )
+            st.metric("🔗 XHR APIs Found", total_xhr_calls)
+        with col5:
+            st.metric("☁️ Cloud IPs", total_ip_matches)
 
-        # Individual result cards for better readability
-        st.subheader("🔍 Detailed Results")
+        # Provider breakdown
+        st.markdown("**Provider Distribution:**")
+        provider_cols = st.columns(len(providers))
+        for i, (provider, count) in enumerate(providers.items()):
+            with provider_cols[i % len(provider_cols)]:
+
+                def get_provider_emoji(provider):
+                    if provider == "AWS":
+                        return "🟧"
+                    elif provider == "GCP":
+                        return "🔵"
+                    elif provider == "Azure":
+                        return "🔷"
+                    elif provider == "Insufficient Data":
+                        return "🔍"
+                    elif provider == "Error":
+                        return "❌"
+                    else:
+                        return "⚫"
+
+                emoji = get_provider_emoji(provider)
+                st.metric(f"{emoji} {provider}", count)
+
+        # Individual result cards with enhanced details
+        st.subheader("🔍 Detailed Analysis Results")
 
         for i, result in enumerate(results):
             provider = result.get("primary_cloud_provider", "Unknown")
+            confidence = result.get("confidence_score", 0)
             primary_reason = result.get("primary_reason", "No reason provided")
 
-            # Enhanced color coding to handle "Insufficient Data" and fix the red error bug
+            # Enhanced color coding based on confidence
             if provider == "Insufficient Data":
-                card_color = "#e8f4fd"  # Light blue for insufficient data
+                card_color = "#e8f4fd"  # Light blue
                 status_emoji = "🔍"
                 status_text = "INSUFFICIENT DATA"
                 border_color = "#17a2b8"
-            elif result["correct"]:
-                card_color = "#d4f6d4"  # Light green
+            elif provider == "Error":
+                card_color = "#fff3cd"  # Light yellow for errors
+                status_emoji = "⚠️"
+                status_text = "ERROR"
+                border_color = "#ffc107"
+            elif confidence >= 95:
+                card_color = "#d4f6d4"  # Light green for very high confidence
+                status_emoji = "🎯"
+                status_text = "VERY HIGH CONFIDENCE"
+                border_color = "#28a745"
+            elif confidence >= 80:
+                card_color = "#d4f6d4"  # Light green for high confidence
                 status_emoji = "✅"
-                status_text = "CORRECT"
+                status_text = "HIGH CONFIDENCE"
                 border_color = "#28a745"
             else:
-                card_color = "#f6d4d4"  # Light red for actual wrong predictions with decent confidence
-                status_emoji = "❌"
-                status_text = "WRONG"
-                border_color = "#dc3545"
+                card_color = "#f8f9fa"  # Light gray for low confidence
+                status_emoji = "⚪"
+                status_text = "LOW CONFIDENCE"
+                border_color = "#6c757d"
 
-            # Provider emojis
+            # Provider emoji
             def get_provider_emoji(provider):
                 if provider == "AWS":
                     return "🟧"
@@ -712,13 +870,14 @@ def display_results(results: List[Dict], container):
                     return "🔷"
                 elif provider == "Insufficient Data":
                     return "🔍"
+                elif provider == "Error":
+                    return "❌"
                 else:
                     return "⚫"
 
-            true_emoji = get_provider_emoji(result["true_label"])
-            pred_emoji = get_provider_emoji(result["predicted_label"])
+            emoji = get_provider_emoji(provider)
 
-            # Create individual result card
+            # Create enhanced result card
             st.markdown(
                 f"""
             <div style="
@@ -730,7 +889,7 @@ def display_results(results: List[Dict], container):
                 box-shadow: 0 2px 4px rgba(0,0,0,0.1);
             ">
                 <h4 style="margin: 0 0 15px 0; color: #333;">
-                    {status_emoji} <strong>{result["url"]}</strong> - {status_text}
+                    {status_emoji} <strong>{result["url"]}</strong> → {emoji} <strong>{provider}</strong> ({confidence}% confidence)
                 </h4>
                 <div style="background-color: white; padding: 15px; border-radius: 5px; margin: 10px 0;">
                     <strong>🎯 Primary Reason:</strong><br>
@@ -738,74 +897,156 @@ def display_results(results: List[Dict], container):
                         {primary_reason}
                     </span>
                 </div>
-            </div>
             """,
                 unsafe_allow_html=True,
             )
 
-            # Additional details in expander
-            with st.expander(f"🔍 Full Details for {result['url']}", expanded=False):
-                col1, col2 = st.columns([2, 1])
+            # Show inline summary of key findings
+            backend_data = result.get("details", {}).get("backend_data", {})
+            ip_analysis = result.get("ip_analysis", {})
+
+            # Quick summary below each result
+            summary_parts = []
+            if backend_data.get("xhr_api_calls"):
+                summary_parts.append(
+                    f"🔗 {len(backend_data['xhr_api_calls'])} XHR APIs"
+                )
+            if backend_data.get("app_subdomains"):
+                summary_parts.append(
+                    f"🏢 {len(backend_data['app_subdomains'])} subdomains"
+                )
+            if ip_analysis.get("cloud_matches", 0) > 0:
+                summary_parts.append(
+                    f"☁️ {ip_analysis['cloud_matches']}/{ip_analysis.get('total_ips_checked', 0)} cloud IPs"
+                )
+            if backend_data.get("cloud_provider_domains"):
+                summary_parts.append(
+                    f"🎯 {len(backend_data['cloud_provider_domains'])} direct cloud calls"
+                )
+
+            if summary_parts:
+                st.markdown(f"**Quick Summary:** {' • '.join(summary_parts)}")
+
+            # Enhanced details in expander
+            with st.expander(
+                f"🔍 Complete Analysis Details for {result['url']}", expanded=False
+            ):
+                # Two column layout for better organization
+                col1, col2 = st.columns([1, 1])
 
                 with col1:
-                    # Show backend data
-                    backend_data = result.get("details", {}).get("backend_data", {})
-
+                    st.markdown("### 🔗 **XHR API Discovery**")
                     if backend_data.get("xhr_api_calls"):
-                        st.write("**🎯 XHR API Calls Found:**")
+                        st.write(
+                            f"**Found {len(backend_data['xhr_api_calls'])} XHR API endpoints:**"
+                        )
                         for api in backend_data["xhr_api_calls"]:
                             st.code(api, language="text")
+                    else:
+                        st.info("No XHR API calls discovered")
 
+                    st.markdown("### 🏢 **App Subdomains**")
+                    if backend_data.get("app_subdomains"):
+                        st.write(
+                            f"**Successfully explored {len(backend_data['app_subdomains'])} app subdomains:**"
+                        )
+                        for subdomain in backend_data["app_subdomains"]:
+                            st.success(f"📍 {subdomain}")
+                    else:
+                        st.info("No app subdomains successfully explored")
+
+                    st.markdown("### ☁️ **Direct Cloud Service Calls**")
                     if backend_data.get("cloud_provider_domains"):
-                        st.write("**☁️ Direct Cloud Provider Calls:**")
+                        st.write(
+                            f"**Found {len(backend_data['cloud_provider_domains'])} direct cloud service calls:**"
+                        )
                         for domain_info in backend_data["cloud_provider_domains"]:
                             if isinstance(domain_info, tuple):
                                 if len(domain_info) == 3:
                                     domain, provider_name, service_type = domain_info
                                     st.success(
-                                        f"🔗 **{domain}** → {provider_name} {service_type}"
+                                        f"🔗 **{domain}** → {provider_name} ({service_type})"
                                     )
                                 else:
                                     domain, provider_name = domain_info
                                     st.success(f"🔗 **{domain}** → {provider_name}")
                             else:
                                 st.success(f"🔗 **{domain_info}**")
+                    else:
+                        st.info("No direct cloud service calls detected")
 
-                    if backend_data.get("app_subdomains"):
-                        st.write("**📱 App Subdomains Explored:**")
-                        for subdomain in backend_data["app_subdomains"]:
-                            st.info(f"📍 {subdomain}")
+                with col2:
+                    st.markdown("### 📍 **IP Range Analysis**")
+                    if ip_analysis:
+                        total_ips = ip_analysis.get("total_ips_checked", 0)
+                        cloud_matches = ip_analysis.get("cloud_matches", 0)
 
-                    # Show evidence with enhanced details
+                        st.metric("Total IPs Analyzed", total_ips)
+                        st.metric("Cloud IP Matches", f"{cloud_matches}/{total_ips}")
+
+                        # Show cloud IP matches
+                        cloud_ip_matches = ip_analysis.get("cloud_ip_matches", [])
+                        if cloud_ip_matches:
+                            st.write("**✅ Cloud IP Matches:**")
+                            for match in cloud_ip_matches:
+                                api_domain = match.get("api_domain", "unknown")
+                                ip = match.get("ip", "unknown")
+                                provider_match = match.get("provider", "unknown")
+                                ip_range = match.get("ip_range", "unknown")
+                                st.success(f"**{api_domain}**")
+                                st.code(f"IP: {ip} → {provider_match} range {ip_range}")
+
+                        # Show all IPs analyzed
+                        ip_details = ip_analysis.get("ip_details", {})
+                        if ip_details:
+                            st.write("**🔍 All IPs Analyzed:**")
+                            for ip, details in list(ip_details.items())[
+                                :10
+                            ]:  # Limit to first 10
+                                api_domain = details.get("api_domain", "unknown")
+                                is_cloud = details.get("is_cloud_ip", False)
+                                status_icon = "✅" if is_cloud else "❌"
+                                status_text = "Cloud IP" if is_cloud else "Not cloud"
+                                st.write(
+                                    f"{status_icon} `{api_domain}` → {ip} ({status_text})"
+                                )
+
+                            if len(ip_details) > 10:
+                                st.info(
+                                    f"... and {len(ip_details) - 10} more IPs analyzed"
+                                )
+                    else:
+                        st.info("No IP analysis data available")
+
+                    st.markdown("### 🧾 **Evidence Summary**")
                     evidence = result.get("evidence", [])
                     if evidence:
-                        st.write("**🔍 Technical Evidence:**")
-                        for ev in evidence:
-                            method = ev["method"]
-                            evidence_text = ev["evidence"]
-                            points = ev["confidence_points"]
+                        st.write(f"**Found {len(evidence)} pieces of evidence:**")
+                        for i, ev in enumerate(evidence, 1):
+                            method = ev.get("method", "Unknown")
+                            evidence_text = ev.get("evidence", "No details")
+                            confidence_level = ev.get("confidence", "Unknown")
 
-                            st.write(f"**{method}** (+{points} pts)")
-                            st.write(f"📋 {evidence_text}")
+                            with st.container():
+                                st.write(
+                                    f"**{i}. {method}** ({confidence_level} confidence)"
+                                )
+                                st.write(f"📋 {evidence_text}")
 
-                            # Show detailed technical info if available
-                            if ev.get("details"):
-                                details = ev["details"]
-                                with st.container():
-                                    st.markdown("**Technical Details:**")
+                                # Show technical details if available
+                                details = ev.get("details", {})
+                                if details:
                                     if details.get("endpoint_url"):
                                         st.code(f"Endpoint: {details['endpoint_url']}")
                                     if details.get("ip_address"):
-                                        st.code(f"IP Address: {details['ip_address']}")
+                                        st.code(f"IP: {details['ip_address']}")
                                     if details.get("ip_range"):
-                                        st.code(f"IP Range: {details['ip_range']}")
-                                    if details.get("cloud_domain"):
-                                        st.code(
-                                            f"Cloud Domain: {details['cloud_domain']}"
-                                        )
-                                    if details.get("service_type"):
-                                        st.code(f"Service: {details['service_type']}")
-                            st.write("---")
+                                        st.code(f"Range: {details['ip_range']}")
+                                    if details.get("network_name"):
+                                        st.code(f"Network: {details['network_name']}")
+                                st.write("---")
+                    else:
+                        st.info("No evidence collected")
 
                 with col2:
                     # Summary info
