@@ -1097,7 +1097,7 @@ class CloudProviderDetector:
 
         result = {
             "url": url,
-            "primary_cloud_provider": "Other",
+            "primary_cloud_provider": "Insufficient Data",
             "confidence_score": 0,
             "primary_reason": "No backend API endpoints detected",
             "evidence": [],
@@ -1398,8 +1398,10 @@ class CloudProviderDetector:
                 logger.info("  ❌ No backend cloud infrastructure detected")
 
         except Exception as e:
+            result["primary_cloud_provider"] = "Insufficient Data"
+            result["confidence_score"] = 0
             result["details"]["error"] = str(e)
-            result["primary_reason"] = f"XHR analysis failed: {str(e)}"
+            result["primary_reason"] = f"Analysis failed: {str(e)}"
             logger.error(f"  ❌ Error analyzing {url}: {e}")
 
         return result

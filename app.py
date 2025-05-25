@@ -211,9 +211,7 @@ def format_detected_providers(
 
 def get_status_info(predicted_label: str, is_correct: bool) -> Tuple[str, str, str]:
     """Get status emoji, CSS class, and text for a result."""
-    if predicted_label == "Error":
-        return "❌", "result-card-wrong", "ERROR"
-    elif predicted_label == "Insufficient Data":
+    if predicted_label == "Insufficient Data":
         return "🔍", "result-card-unknown", "INSUFFICIENT DATA"
     elif is_correct:
         return "✅", "result-card-correct", "CORRECT"
@@ -362,13 +360,11 @@ def display_summary_metrics() -> None:
     # Calculate metrics
     total = len(results)
     unknown = sum(1 for r in results if r.get("predicted_label") == "Insufficient Data")
-    errors = sum(1 for r in results if r.get("predicted_label") == "Error")
-    classified = total - unknown - errors
+    classified = total - unknown
     correct = sum(
         1
         for r in results
-        if r.get("correct", False)
-        and r.get("predicted_label") not in ["Insufficient Data", "Error"]
+        if r.get("correct", False) and r.get("predicted_label") != "Insufficient Data"
     )
     wrong = classified - correct
 
@@ -549,9 +545,9 @@ def run_single_domain_test(domain: str, true_label: str) -> None:
         status_emoji = (
             "✅"
             if is_correct
-            else "❌"
-            if predicted_label != "Insufficient Data"
             else "🔍"
+            if predicted_label == "Insufficient Data"
+            else "❌"
         )
 
         update_activity(
@@ -682,7 +678,7 @@ def create_test_result(
         "all_detected_providers": list(all_detected_providers),  # Create new list
         "confidence": confidence,
         "primary_reason": primary_reason,
-        "correct": is_correct and predicted_label not in ["Insufficient Data", "Error"],
+        "correct": is_correct and predicted_label != "Insufficient Data",
         "activity_log": list(activity_log),  # Create new list
         "backend_data": backend_data,  # Already deep copied
         "ip_analysis": ip_analysis,  # Already deep copied
@@ -709,9 +705,9 @@ def show_completion_status(
     status_class = (
         "crawl-completed"
         if is_correct
-        else "crawl-error"
-        if predicted_label != "Insufficient Data"
         else "crawl-activity"
+        if predicted_label == "Insufficient Data"
+        else "crawl-error"
     )
 
     with activity_placeholder.container():
@@ -738,11 +734,11 @@ def handle_analysis_error(
     """Handle analysis errors and create error result."""
     update_activity(f"❌ Error: {error_msg}")
 
-    # Add error result
+    # Add error result - classify as "Insufficient Data" instead of "Error"
     test_result = {
         "domain": domain,
         "true_label": true_label,
-        "predicted_label": "Error",
+        "predicted_label": "Insufficient Data",
         "all_detected_providers": [],
         "confidence": 0,
         "primary_reason": f"Analysis failed: {error_msg}",
