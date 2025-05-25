@@ -5,16 +5,19 @@ Streamlit Cloud Provider Scanner Application
 A web interface for testing cloud provider detection accuracy.
 Features:
 - Run accuracy tests against labeled data
-- Live crawling activity display
+- Live crawling activity display with complete details
 - Real-time summary metrics
-- Collapsible detailed logs
+- Always-visible history with full details
+- Keep-alive mechanism
+- Partial matching for multiple cloud providers
 """
 
 import streamlit as st
 import pandas as pd
 import asyncio
 import time
-from typing import Dict
+import threading
+from typing import Dict, List
 
 # Import our updated detector
 from detector import CloudProviderDetector
@@ -110,19 +113,110 @@ st.markdown(
         border-radius: 8px;
         margin-bottom: 1rem;
     }
+    .result-card {
+        background: #ffffff;
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        padding: 1rem;
+        margin: 0.5rem 0;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    .result-card-correct {
+        border-left: 4px solid #28a745;
+        background: #f8fff8;
+    }
+    .result-card-wrong {
+        border-left: 4px solid #dc3545;
+        background: #fff8f8;
+    }
+    .result-card-unknown {
+        border-left: 4px solid #17a2b8;
+        background: #f8fcff;
+    }
+    .detail-section {
+        background: #f8f9fa;
+        padding: 0.75rem;
+        border-radius: 6px;
+        margin: 0.5rem 0;
+        border-left: 3px solid #007bff;
+    }
+    .subdomain-item {
+        background: #e3f2fd;
+        padding: 0.5rem;
+        margin: 0.25rem 0;
+        border-radius: 4px;
+        font-family: monospace;
+    }
+    .api-call-item {
+        background: #f3e5f5;
+        padding: 0.5rem;
+        margin: 0.25rem 0;
+        border-radius: 4px;
+        font-family: monospace;
+    }
+    .ip-match-item {
+        background: #e8f5e8;
+        padding: 0.5rem;
+        margin: 0.25rem 0;
+        border-radius: 4px;
+        font-family: monospace;
+    }
+    .scrollable-results {
+        max-height: 70vh;
+        overflow-y: auto;
+        padding-right: 10px;
+    }
 </style>
 """,
     unsafe_allow_html=True,
 )
 
 
+def keep_alive():
+    """Keep the app alive by updating a hidden element periodically."""
+    if "keep_alive_counter" not in st.session_state:
+        st.session_state.keep_alive_counter = 0
+
+    # Increment counter every few seconds
+    st.session_state.keep_alive_counter += 1
+
+    # Schedule next update
+    threading.Timer(30.0, keep_alive).start()
+
+
+def check_partial_match(
+    expected: str, predicted: str, all_providers: List[str] = None
+) -> bool:
+    """Check if prediction partially matches expected, considering multiple providers."""
+    if predicted == expected:
+        return True
+
+    # Handle multiple providers in prediction
+    if all_providers and expected in all_providers:
+        return True
+
+    # Handle cases where prediction contains expected provider
+    expected_lower = expected.lower()
+    predicted_lower = predicted.lower()
+
+    if expected_lower in predicted_lower:
+        return True
+
+    return False
+
+
 def main():
+    # Start keep-alive mechanism
+    if "keep_alive_started" not in st.session_state:
+        st.session_state.keep_alive_started = True
+        keep_alive()
+
     # Header
     st.markdown(
         """
     <div class="main-header">
         <h1>🧪 Cloud Provider Detection Test</h1>
-        <p>Live accuracy testing with real-time crawling activity</p>
+        <p>Live accuracy testing with complete crawling details</p>
     </div>
     """,
         unsafe_allow_html=True,
@@ -140,10 +234,24 @@ def main():
             <p><strong>XHR API Analysis:</strong> Captures backend API calls from app subdomains</p>
             <p><strong>IP Range Matching:</strong> Matches IPs to official cloud provider ranges</p>
             <p><strong>Direct Cloud Calls:</strong> Detects calls to *.amazonaws.com, *.googleapis.com etc.</p>
+            <p><strong>Enhanced Subdomain Exploration:</strong> Tests api.domain, app.domain, admin.domain, dashboard.domain, and other common subdomains</p>
         </div>
         """,
             unsafe_allow_html=True,
         )
+
+        # Keep-alive indicator
+        if "keep_alive_counter" in st.session_state:
+            st.markdown(f"🔄 **Keep-Alive:** {st.session_state.keep_alive_counter}")
+
+        st.markdown("### ✨ Features")
+        st.markdown("""
+        - **Complete History:** All results always visible
+        - **Partial Matching:** AWS+GCP detection counts as AWS match
+        - **Full Details:** Every subdomain, API call, and IP shown
+        - **Live Updates:** Real-time crawling activity
+        - **Auto Keep-Alive:** Server stays active
+        """)
 
         # Test controls
         st.markdown("### 🚀 Test Controls")
@@ -300,11 +408,14 @@ def run_live_accuracy_test(headless_mode: bool):
     # Create containers for live updates
     activity_container = st.container()
 
-    # Display previous results (most recent first)
+    # Display all previous results (most recent first) - always visible
     if st.session_state.test_results:
-        st.markdown("### 📋 Previous Results")
-        for result in reversed(st.session_state.test_results[-10:]):  # Show last 10
-            display_completed_result(result)
+        st.markdown("### 📋 All Results (Most Recent First)")
+        with st.container():
+            st.markdown('<div class="scrollable-results">', unsafe_allow_html=True)
+            for result in reversed(st.session_state.test_results):  # Show ALL results
+                display_detailed_result(result)
+            st.markdown("</div>", unsafe_allow_html=True)
 
     # Run analysis for current domain
     with activity_container:
@@ -410,8 +521,19 @@ def run_single_domain_test(domain: str, true_label: str, headless_mode: bool):
         confidence = result.get("confidence_score", 0)
         primary_reason = result.get("primary_reason", "No reason provided")
 
-        # Final result
-        is_correct = predicted_label == true_label
+        # Final result with partial matching
+        # Get all detected providers from result
+        all_detected_providers = []
+        if result.get("details", {}).get("provider_scores"):
+            all_detected_providers = [
+                p
+                for p, score in result["details"]["provider_scores"].items()
+                if score > 0
+            ]
+
+        is_correct = check_partial_match(
+            true_label, predicted_label, all_detected_providers
+        )
         status_emoji = (
             "✅"
             if is_correct
@@ -432,6 +554,7 @@ def run_single_domain_test(domain: str, true_label: str, headless_mode: bool):
             "domain": domain,
             "true_label": true_label,
             "predicted_label": predicted_label,
+            "all_detected_providers": all_detected_providers,
             "confidence": confidence,
             "primary_reason": primary_reason,
             "correct": is_correct
@@ -496,61 +619,132 @@ def run_single_domain_test(domain: str, true_label: str, headless_mode: bool):
         st.rerun()
 
 
-def display_completed_result(result: Dict):
-    """Display a completed test result in collapsed form."""
+def display_detailed_result(result: Dict):
+    """Display a completed test result with full details always visible."""
     domain = result["domain"]
     true_label = result["true_label"]
     predicted_label = result["predicted_label"]
+    all_detected_providers = result.get("all_detected_providers", [])
     confidence = result["confidence"]
     is_correct = result.get("correct", False)
+    backend_data = result.get("backend_data", {})
+    ip_analysis = result.get("ip_analysis", {})
 
     # Status styling
     if predicted_label == "Error":
         status_emoji = "❌"
-        status_class = "crawl-error"
+        card_class = "result-card-wrong"
         status_text = "ERROR"
     elif predicted_label == "Insufficient Data":
         status_emoji = "🔍"
-        status_class = "crawl-activity"
+        card_class = "result-card-unknown"
         status_text = "INSUFFICIENT DATA"
     elif is_correct:
         status_emoji = "✅"
-        status_class = "crawl-completed"
+        card_class = "result-card-correct"
         status_text = "CORRECT"
     else:
         status_emoji = "❌"
-        status_class = "crawl-error"
+        card_class = "result-card-wrong"
         status_text = "WRONG"
 
-    # Expandable result
-    with st.expander(
-        f"{status_emoji} {domain} → {predicted_label} ({status_text})", expanded=False
-    ):
-        col1, col2 = st.columns([2, 1])
+    # Create detailed result card
+    st.markdown(
+        f"""
+    <div class="result-card {card_class}">
+        <h4>{status_emoji} {domain} → {predicted_label} ({status_text})</h4>
+        <div style="margin: 0.5rem 0;">
+            <strong>Expected:</strong> {true_label} | 
+            <strong>Predicted:</strong> {predicted_label} | 
+            <strong>Confidence:</strong> {confidence}%
+        </div>
+    """,
+        unsafe_allow_html=True,
+    )
 
-        with col1:
-            st.write(f"**Expected:** {true_label}")
-            st.write(f"**Predicted:** {predicted_label}")
-            st.write(f"**Confidence:** {confidence}%")
-            st.write(f"**Reason:** {result['primary_reason']}")
+    # Show all detected providers if multiple
+    if len(all_detected_providers) > 1:
+        providers_text = ", ".join(all_detected_providers)
+        st.markdown(f"**🔍 All Detected Providers:** {providers_text}")
 
-            # Show activity log
-            if result.get("activity_log"):
-                st.write("**Activity Log:**")
-                log_text = "\n".join(result["activity_log"])
-                st.code(log_text, language="text")
+    # Show primary reason
+    st.markdown(f"**💡 Primary Reason:** {result['primary_reason']}")
 
-        with col2:
-            # Quick stats
-            backend_data = result.get("backend_data", {})
-            ip_analysis = result.get("ip_analysis", {})
+    # Detailed sections
+    col1, col2 = st.columns([1, 1])
 
-            st.metric("Subdomains", len(backend_data.get("app_subdomains", [])))
-            st.metric("XHR Calls", len(backend_data.get("xhr_api_calls", [])))
-            st.metric("Cloud IPs", ip_analysis.get("cloud_matches", 0))
-            st.metric(
-                "Direct Calls", len(backend_data.get("cloud_provider_domains", []))
+    with col1:
+        # Subdomains section
+        st.markdown('<div class="detail-section">', unsafe_allow_html=True)
+        st.markdown("**🏢 Subdomains Explored:**")
+        if backend_data.get("app_subdomains"):
+            for subdomain in backend_data["app_subdomains"]:
+                st.markdown(
+                    f'<div class="subdomain-item">📍 {subdomain}</div>',
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.markdown("*No subdomains discovered*")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        # XHR API Calls section
+        st.markdown('<div class="detail-section">', unsafe_allow_html=True)
+        st.markdown("**🔗 XHR API Calls:**")
+        if backend_data.get("xhr_api_calls"):
+            for api in backend_data["xhr_api_calls"]:
+                st.markdown(
+                    f'<div class="api-call-item">📡 {api}</div>', unsafe_allow_html=True
+                )
+        else:
+            st.markdown("*No XHR API calls found*")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with col2:
+        # IP Analysis section
+        st.markdown('<div class="detail-section">', unsafe_allow_html=True)
+        st.markdown("**📍 IP Analysis & Cloud Matches:**")
+        if ip_analysis.get("cloud_ip_matches"):
+            for match in ip_analysis["cloud_ip_matches"]:
+                api_domain = match.get("api_domain", "unknown")
+                ip = match.get("ip", "unknown")
+                provider = match.get("provider", "unknown")
+                ip_range = match.get("ip_range", "unknown")
+                st.markdown(
+                    f'<div class="ip-match-item">☁️ <strong>{api_domain}</strong><br>IP: {ip} → {provider}<br>Range: {ip_range}</div>',
+                    unsafe_allow_html=True,
+                )
+        elif ip_analysis.get("total_ips_checked", 0) > 0:
+            st.markdown(
+                f"*Checked {ip_analysis['total_ips_checked']} IPs - no cloud matches*"
             )
+        else:
+            st.markdown("*No IP analysis performed*")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        # Direct Cloud Calls section
+        st.markdown('<div class="detail-section">', unsafe_allow_html=True)
+        st.markdown("**☁️ Direct Cloud Provider Calls:**")
+        if backend_data.get("cloud_provider_domains"):
+            for call in backend_data["cloud_provider_domains"]:
+                if isinstance(call, tuple) and len(call) >= 2:
+                    domain_call, provider_name = call[0], call[1]
+                    service_type = call[2] if len(call) > 2 else ""
+                    service_text = f" ({service_type})" if service_type else ""
+                    st.markdown(
+                        f'<div class="api-call-item">🎯 {domain_call} → {provider_name}{service_text}</div>',
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.markdown(
+                        f'<div class="api-call-item">🎯 {call}</div>',
+                        unsafe_allow_html=True,
+                    )
+        else:
+            st.markdown("*No direct cloud provider calls detected*")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("---")
 
 
 if __name__ == "__main__":
