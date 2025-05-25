@@ -10,6 +10,7 @@ Features:
 - Always-visible history with full details
 - Keep-alive mechanism
 - Partial matching for multiple cloud providers
+- Fixed data persistence bug
 """
 
 import streamlit as st
@@ -457,12 +458,29 @@ def run_single_domain_test(domain: str, true_label: str, headless_mode: bool):
         # Start analysis with live updates
         update_activity("🔍 Exploring main domain...")
 
-        # Run analysis (this would need to be modified to provide live updates)
+        # Run analysis
         result = asyncio.run(detector.analyze_website(domain))
 
-        # Simulate live updates based on result data
-        backend_data = result.get("details", {}).get("backend_data", {})
-        ip_analysis = result.get("ip_analysis", {})
+        # IMPORTANT: Create deep copies of data to prevent sharing between results
+        backend_data = {}
+        if result.get("details", {}).get("backend_data"):
+            original_backend = result["details"]["backend_data"]
+            backend_data = {
+                "app_subdomains": list(original_backend.get("app_subdomains", [])),
+                "xhr_api_calls": list(original_backend.get("xhr_api_calls", [])),
+                "cloud_provider_domains": list(
+                    original_backend.get("cloud_provider_domains", [])
+                ),
+            }
+
+        ip_analysis = {}
+        if result.get("ip_analysis"):
+            original_ip = result["ip_analysis"]
+            ip_analysis = {
+                "cloud_ip_matches": list(original_ip.get("cloud_ip_matches", [])),
+                "total_ips_checked": original_ip.get("total_ips_checked", 0),
+                "cloud_matches": original_ip.get("cloud_matches", 0),
+            }
 
         # Show subdomain discovery
         if backend_data.get("app_subdomains"):
@@ -536,25 +554,33 @@ def run_single_domain_test(domain: str, true_label: str, headless_mode: bool):
             f"{status_emoji} Expected: {true_label}, Got: {predicted_label}"
         )
 
-        # Create result object
+        # Create result object with isolated data
         test_result = {
             "domain": domain,
             "true_label": true_label,
             "predicted_label": predicted_label,
-            "all_detected_providers": all_detected_providers,
+            "all_detected_providers": list(all_detected_providers),  # Create new list
             "confidence": confidence,
             "primary_reason": primary_reason,
             "correct": is_correct
             and predicted_label not in ["Insufficient Data", "Error"],
-            "activity_log": activity_log.copy(),
-            "backend_data": backend_data,
-            "ip_analysis": ip_analysis,
+            "activity_log": list(activity_log),  # Create new list
+            "backend_data": backend_data,  # Already deep copied above
+            "ip_analysis": ip_analysis,  # Already deep copied above
             "timestamp": time.time(),
         }
 
         # Add to results
         st.session_state.test_results.append(test_result)
         st.session_state.current_test_index += 1
+
+        # Format detected providers for completion display
+        if len(all_detected_providers) > 1:
+            completion_display = " + ".join(all_detected_providers)
+        elif len(all_detected_providers) == 1:
+            completion_display = all_detected_providers[0]
+        else:
+            completion_display = predicted_label
 
         # Show completed state briefly
         status_class = (
@@ -564,14 +590,6 @@ def run_single_domain_test(domain: str, true_label: str, headless_mode: bool):
             if predicted_label != "Insufficient Data"
             else "crawl-activity"
         )
-
-        # Format detected providers for completion display
-        if len(all_detected_providers) > 1:
-            completion_display = " + ".join(all_detected_providers)
-        elif len(all_detected_providers) == 1:
-            completion_display = all_detected_providers[0]
-        else:
-            completion_display = predicted_label
 
         with activity_placeholder.container():
             st.markdown(
@@ -598,10 +616,11 @@ def run_single_domain_test(domain: str, true_label: str, headless_mode: bool):
             "domain": domain,
             "true_label": true_label,
             "predicted_label": "Error",
+            "all_detected_providers": [],
             "confidence": 0,
             "primary_reason": f"Analysis failed: {str(e)}",
             "correct": False,
-            "activity_log": activity_log.copy(),
+            "activity_log": list(activity_log),  # Create new list
             "backend_data": {},
             "ip_analysis": {},
             "timestamp": time.time(),
