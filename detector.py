@@ -998,13 +998,14 @@ class CloudProviderDetector:
                                     provider_score += 35.0
 
                         # Check additional backend indicators
-                        self._check_additional_backend_indicators(
+                        provider_score = self._check_additional_backend_indicators(
                             headers, provider, provider_headers, provider_score
                         )
 
                         if provider_headers:
                             scores[provider] += provider_score
                             found_evidence[provider] = {
+                                "provider": provider,  # Add missing provider key
                                 "endpoint": api_domain,
                                 "headers": provider_headers,
                                 "score": provider_score,
@@ -1036,7 +1037,7 @@ class CloudProviderDetector:
         provider: str,
         provider_headers: list,
         provider_score: float,
-    ):
+    ) -> float:
         """Check for additional backend indicators in headers."""
 
         # Check for cloud-specific response patterns
@@ -1090,6 +1091,8 @@ class CloudProviderDetector:
             if "x-ms-documentdb-partitionkey" in headers:
                 provider_headers.append("Backend: Azure Cosmos DB detected")
                 provider_score += 55.0
+
+        return provider_score
 
     async def analyze_website(self, url: str) -> Dict[str, any]:
         """Analyze website focusing exclusively on XHR/API calls from app subdomains with comprehensive IP range matching."""
@@ -1420,7 +1423,7 @@ class CloudProviderDetector:
         # Use the first evidence (since all evidence is equally valid now)
         strongest = provider_evidence[0]
 
-        if strongest["method"] == "XHR API Endpoint":
+        if strongest["method"] == "XHR API Endpoint IP Range":
             details = strongest.get("details", {})
             endpoint = details.get("endpoint_url", "unknown endpoint")
             ip_addr = details.get("ip_address", "unknown IP")
