@@ -8,21 +8,26 @@ Features:
 - Live crawling activity display with complete details
 - Real-time summary metrics
 - Always-visible history with full details
-- Keep-alive mechanism
 - Partial matching for multiple cloud providers
-- Fixed data persistence bug
+- Enhanced backend header analysis
 """
 
 import streamlit as st
 import pandas as pd
 import asyncio
 import time
-import threading
 import copy
-from typing import Dict, List
+from typing import Dict, List, Optional, Tuple
 
 # Import our updated detector
 from detector import CloudProviderDetector
+
+# Constants
+ACTIVITY_UPDATE_DELAY = 0.1  # seconds
+TEST_COMPLETION_DELAY = 2.0  # seconds
+MAX_ACTIVITY_LINES = 15
+MAX_PREVIEW_ITEMS = 3
+MAX_PREVIEW_MATCHES = 2
 
 # Page configuration
 st.set_page_config(
@@ -174,20 +179,8 @@ st.markdown(
 )
 
 
-def keep_alive():
-    """Keep the app alive by updating a hidden element periodically."""
-    if "keep_alive_counter" not in st.session_state:
-        st.session_state.keep_alive_counter = 0
-
-    # Increment counter every few seconds
-    st.session_state.keep_alive_counter += 1
-
-    # Schedule next update
-    threading.Timer(30.0, keep_alive).start()
-
-
 def check_partial_match(
-    expected: str, predicted: str, all_providers: List[str] = None
+    expected: str, predicted: str, all_providers: Optional[List[str]] = None
 ) -> bool:
     """Check if prediction partially matches expected, considering multiple providers."""
     if predicted == expected:
@@ -201,18 +194,67 @@ def check_partial_match(
     expected_lower = expected.lower()
     predicted_lower = predicted.lower()
 
-    if expected_lower in predicted_lower:
-        return True
-
-    return False
+    return expected_lower in predicted_lower
 
 
-def main():
-    # Start keep-alive mechanism
-    if "keep_alive_started" not in st.session_state:
-        st.session_state.keep_alive_started = True
-        keep_alive()
+def format_detected_providers(
+    all_detected_providers: List[str], predicted_label: str
+) -> str:
+    """Format detected providers for display."""
+    if len(all_detected_providers) > 1:
+        return " + ".join(all_detected_providers)
+    elif len(all_detected_providers) == 1:
+        return all_detected_providers[0]
+    else:
+        return predicted_label
 
+
+def get_status_info(predicted_label: str, is_correct: bool) -> Tuple[str, str, str]:
+    """Get status emoji, CSS class, and text for a result."""
+    if predicted_label == "Error":
+        return "❌", "result-card-wrong", "ERROR"
+    elif predicted_label == "Insufficient Data":
+        return "🔍", "result-card-unknown", "INSUFFICIENT DATA"
+    elif is_correct:
+        return "✅", "result-card-correct", "CORRECT"
+    else:
+        return "❌", "result-card-wrong", "WRONG"
+
+
+def create_deep_copy_result_data(result: Dict) -> Tuple[Dict, Dict, List]:
+    """Create deep copies of result data to prevent sharing between results."""
+    backend_data = {}
+    if result.get("details", {}).get("backend_data"):
+        original_backend = result["details"]["backend_data"]
+        backend_data = {
+            "app_subdomains": list(original_backend.get("app_subdomains", [])),
+            "xhr_api_calls": list(original_backend.get("xhr_api_calls", [])),
+            "cloud_provider_domains": copy.deepcopy(
+                original_backend.get("cloud_provider_domains", [])
+            ),
+        }
+
+    ip_analysis = {}
+    if result.get("ip_analysis"):
+        original_ip = result["ip_analysis"]
+        ip_analysis = {
+            "cloud_ip_matches": copy.deepcopy(original_ip.get("cloud_ip_matches", [])),
+            "total_ips_checked": original_ip.get("total_ips_checked", 0),
+            "cloud_matches": original_ip.get("cloud_matches", 0),
+        }
+
+    # Deep copy evidence data to prevent sharing
+    evidence_data = []
+    if result.get("evidence"):
+        evidence_data = copy.deepcopy(result["evidence"])
+    elif result.get("details", {}).get("all_evidence"):
+        evidence_data = copy.deepcopy(result["details"]["all_evidence"])
+
+    return backend_data, ip_analysis, evidence_data
+
+
+def main() -> None:
+    """Main application function."""
     # Header
     st.markdown(
         """
@@ -228,9 +270,24 @@ def main():
     col1, col2 = st.columns([3, 1])
 
     with col2:
-        # Sidebar info
-        st.markdown(
-            """
+        render_sidebar()
+
+    with col1:
+        # Summary metrics at top
+        display_summary_metrics()
+
+        # Test results area
+        if getattr(st.session_state, "test_running", False):
+            run_live_accuracy_test()
+        else:
+            st.info("👆 Click 'Start Accuracy Test' to begin live testing")
+
+
+def render_sidebar() -> None:
+    """Render the sidebar with controls and information."""
+    # Sidebar info
+    st.markdown(
+        """
         <div class="sidebar-info">
             <h3>🎯 Detection Methods</h3>
             <p><strong>XHR API Analysis:</strong> Captures backend API calls from app subdomains</p>
@@ -240,48 +297,36 @@ def main():
             <p><strong>Enhanced Subdomain Exploration:</strong> Tests api.domain, app.domain, admin.domain, dashboard.domain, and other common subdomains</p>
         </div>
         """,
-            unsafe_allow_html=True,
-        )
+        unsafe_allow_html=True,
+    )
 
-        # Test controls
-        st.markdown("### 🚀 Test Controls")
+    # Test controls
+    st.markdown("### 🚀 Test Controls")
 
-        # Check for browser availability
-        try:
-            from detector import BROWSERS_AVAILABLE
+    # Check for browser availability
+    try:
+        from detector import BROWSERS_AVAILABLE
 
-            if BROWSERS_AVAILABLE:
-                st.success("🚀 **Full Analysis Mode**\nBrowser features available")
-            else:
-                st.info("🔍 **IP-Only Mode**\nUsing IP range analysis")
-        except:
-            pass
-
-        headless_mode = st.checkbox("Headless browser", value=True)
-
-        if st.button(
-            "🧪 Start Accuracy Test", type="primary", use_container_width=True
-        ):
-            st.session_state.test_running = True
-            st.rerun()
-
-        if st.button("🛑 Stop Test", use_container_width=True):
-            st.session_state.test_running = False
-            st.session_state.test_results = []
-            st.rerun()
-
-    with col1:
-        # Summary metrics at top
-        display_summary_metrics()
-
-        # Test results area
-        if getattr(st.session_state, "test_running", False):
-            run_live_accuracy_test(headless_mode)
+        if BROWSERS_AVAILABLE:
+            st.success("🚀 **Full Analysis Mode**\nBrowser features available")
         else:
-            st.info("👆 Click 'Start Accuracy Test' to begin live testing")
+            st.info("🔍 **IP-Only Mode**\nUsing IP range analysis")
+    except ImportError:
+        st.warning("⚠️ **Limited Mode**\nDetector module not available")
+
+    headless_mode = st.checkbox("Headless browser", value=True)
+
+    if st.button("🧪 Start Accuracy Test", type="primary", use_container_width=True):
+        st.session_state.test_running = True
+        st.rerun()
+
+    if st.button("🛑 Stop Test", use_container_width=True):
+        st.session_state.test_running = False
+        st.session_state.test_results = []
+        st.rerun()
 
 
-def display_summary_metrics():
+def display_summary_metrics() -> None:
     """Display summary metrics at the top."""
     results = getattr(st.session_state, "test_results", [])
 
@@ -363,18 +408,26 @@ def display_summary_metrics():
     )
 
 
-def run_live_accuracy_test(headless_mode: bool):
+def run_live_accuracy_test() -> None:
     """Run live accuracy test with real-time updates."""
-
     # Initialize session state
     if "test_results" not in st.session_state:
         st.session_state.test_results = []
     if "current_test_index" not in st.session_state:
         st.session_state.current_test_index = 0
     if "test_data" not in st.session_state:
-        # Load and shuffle test data
-        test_df = pd.read_csv("data/test.csv")
-        st.session_state.test_data = test_df.sample(frac=1).reset_index(drop=True)
+        try:
+            # Load and shuffle test data
+            test_df = pd.read_csv("data/test.csv")
+            st.session_state.test_data = test_df.sample(frac=1).reset_index(drop=True)
+        except FileNotFoundError:
+            st.error("❌ Test data file 'data/test.csv' not found!")
+            st.session_state.test_running = False
+            return
+        except Exception as e:
+            st.error(f"❌ Error loading test data: {str(e)}")
+            st.session_state.test_running = False
+            return
 
     test_data = st.session_state.test_data
     current_index = st.session_state.current_test_index
@@ -409,12 +462,11 @@ def run_live_accuracy_test(headless_mode: bool):
 
     # Run analysis for current domain
     with activity_container:
-        run_single_domain_test(domain, true_label, headless_mode)
+        run_single_domain_test(domain, true_label)
 
 
-def run_single_domain_test(domain: str, true_label: str, headless_mode: bool):
+def run_single_domain_test(domain: str, true_label: str) -> None:
     """Run test for a single domain with live activity display."""
-
     # Create activity display
     activity_placeholder = st.empty()
 
@@ -433,14 +485,20 @@ def run_single_domain_test(domain: str, true_label: str, headless_mode: bool):
         )
 
     # Initialize detector
-    detector = CloudProviderDetector(headless=headless_mode)
+    try:
+        detector = CloudProviderDetector(headless=True)
+    except Exception as e:
+        st.error(f"❌ Failed to initialize detector: {str(e)}")
+        return
 
     # Activity log
     activity_log = ["🚀 Starting analysis...", "🌐 Initializing browser..."]
 
-    def update_activity(message):
+    def update_activity(message: str) -> None:
         activity_log.append(message)
-        activity_html = "<br>".join(activity_log[-15:])  # Show last 15 lines
+        activity_html = "<br>".join(
+            activity_log[-MAX_ACTIVITY_LINES:]
+        )  # Show last N lines
 
         with activity_placeholder.container():
             st.markdown(
@@ -454,7 +512,7 @@ def run_single_domain_test(domain: str, true_label: str, headless_mode: bool):
             """,
                 unsafe_allow_html=True,
             )
-        time.sleep(0.1)  # Small delay for visual effect
+        time.sleep(ACTIVITY_UPDATE_DELAY)  # Small delay for visual effect
 
     try:
         # Start analysis with live updates
@@ -463,100 +521,19 @@ def run_single_domain_test(domain: str, true_label: str, headless_mode: bool):
         # Run analysis
         result = asyncio.run(detector.analyze_website(domain))
 
-        # IMPORTANT: Create deep copies of data to prevent sharing between results
-        backend_data = {}
-        if result.get("details", {}).get("backend_data"):
-            original_backend = result["details"]["backend_data"]
-            backend_data = {
-                "app_subdomains": list(original_backend.get("app_subdomains", [])),
-                "xhr_api_calls": list(original_backend.get("xhr_api_calls", [])),
-                "cloud_provider_domains": copy.deepcopy(
-                    original_backend.get("cloud_provider_domains", [])
-                ),
-            }
+        # Create deep copies of data to prevent sharing between results
+        backend_data, ip_analysis, evidence_data = create_deep_copy_result_data(result)
 
-        ip_analysis = {}
-        if result.get("ip_analysis"):
-            original_ip = result["ip_analysis"]
-            ip_analysis = {
-                "cloud_ip_matches": copy.deepcopy(
-                    original_ip.get("cloud_ip_matches", [])
-                ),
-                "total_ips_checked": original_ip.get("total_ips_checked", 0),
-                "cloud_matches": original_ip.get("cloud_matches", 0),
-            }
+        # Show analysis progress
+        show_analysis_progress(
+            update_activity, backend_data, ip_analysis, evidence_data
+        )
 
-        # Deep copy evidence data to prevent sharing
-        evidence_data = []
-        if result.get("evidence"):
-            evidence_data = copy.deepcopy(result["evidence"])
-        elif result.get("details", {}).get("all_evidence"):
-            evidence_data = copy.deepcopy(result["details"]["all_evidence"])
-
-        # Show subdomain discovery
-        if backend_data.get("app_subdomains"):
-            for subdomain in backend_data["app_subdomains"]:
-                update_activity(f"🏢 Found subdomain: {subdomain}")
-        else:
-            update_activity("🏢 No app subdomains discovered")
-
-        # Show XHR calls
-        if backend_data.get("xhr_api_calls"):
-            update_activity(
-                f"🔗 Discovered {len(backend_data['xhr_api_calls'])} XHR API calls"
-            )
-            for api in backend_data["xhr_api_calls"][:3]:
-                update_activity(f"   📡 {api}")
-
-            # Show header analysis
-            update_activity("🛡️ Analyzing backend headers...")
-        else:
-            update_activity("🔗 No XHR API calls found")
-
-        # Show IP analysis
-        if ip_analysis.get("cloud_ip_matches"):
-            update_activity(
-                f"☁️ Found {len(ip_analysis['cloud_ip_matches'])} cloud IP matches"
-            )
-            for match in ip_analysis["cloud_ip_matches"][:2]:
-                update_activity(
-                    f"   📍 {match['ip']} → {match['provider']} ({match['ip_range']})"
-                )
-        elif ip_analysis.get("total_ips_checked", 0) > 0:
-            update_activity(
-                f"🔍 Checked {ip_analysis['total_ips_checked']} IPs - no cloud matches"
-            )
-
-        # Show direct cloud calls
-        if backend_data.get("cloud_provider_domains"):
-            update_activity(
-                f"☁️ Found {len(backend_data['cloud_provider_domains'])} direct cloud calls"
-            )
-            for call in backend_data["cloud_provider_domains"][:2]:
-                if isinstance(call, tuple):
-                    update_activity(f"   🎯 {call[0]} → {call[1]}")
-
+        # Process final results
         predicted_label = result["primary_cloud_provider"]
         confidence = result.get("confidence_score", 0)
         primary_reason = result.get("primary_reason", "No reason provided")
 
-        # Show header analysis results
-        if evidence_data:
-            header_evidence = [
-                e for e in evidence_data if e.get("method") == "XHR API Headers"
-            ]
-            if header_evidence:
-                update_activity(
-                    f"🛡️ Found backend headers: {len(header_evidence)} endpoints with cloud headers"
-                )
-                for evidence in header_evidence[:2]:  # Show first 2
-                    endpoint = evidence.get("details", {}).get(
-                        "endpoint_url", "unknown"
-                    )
-                    provider = evidence.get("provider", "unknown")
-                    update_activity(f"   🔍 {endpoint} → {provider} headers detected")
-
-        # Final result with partial matching
         # Get all detected providers from result
         all_detected_providers = []
         if result.get("details", {}).get("provider_scores"):
@@ -585,87 +562,206 @@ def run_single_domain_test(domain: str, true_label: str, headless_mode: bool):
         )
 
         # Create result object with isolated data
-        test_result = {
-            "domain": domain,
-            "true_label": true_label,
-            "predicted_label": predicted_label,
-            "all_detected_providers": list(all_detected_providers),  # Create new list
-            "confidence": confidence,
-            "primary_reason": primary_reason,
-            "correct": is_correct
-            and predicted_label not in ["Insufficient Data", "Error"],
-            "activity_log": list(activity_log),  # Create new list
-            "backend_data": backend_data,  # Already deep copied above
-            "ip_analysis": ip_analysis,  # Already deep copied above
-            "evidence": evidence_data,  # Deep copied evidence data
-            "timestamp": time.time(),
-        }
+        test_result = create_test_result(
+            domain,
+            true_label,
+            predicted_label,
+            all_detected_providers,
+            confidence,
+            primary_reason,
+            is_correct,
+            activity_log,
+            backend_data,
+            ip_analysis,
+            evidence_data,
+        )
 
-        # Add to results
+        # Add to results and advance
         st.session_state.test_results.append(test_result)
         st.session_state.current_test_index += 1
 
-        # Format detected providers for completion display
-        if len(all_detected_providers) > 1:
-            completion_display = " + ".join(all_detected_providers)
-        elif len(all_detected_providers) == 1:
-            completion_display = all_detected_providers[0]
-        else:
-            completion_display = predicted_label
-
-        # Show completed state briefly
-        status_class = (
-            "crawl-completed"
-            if is_correct
-            else "crawl-error"
-            if predicted_label != "Insufficient Data"
-            else "crawl-activity"
+        # Show completion status
+        show_completion_status(
+            activity_placeholder,
+            domain,
+            true_label,
+            predicted_label,
+            all_detected_providers,
+            is_correct,
+            status_emoji,
         )
 
-        with activity_placeholder.container():
-            st.markdown(
-                f"""
-            <div class="crawl-activity {status_class}">
-                <h4>{status_emoji} Completed: {domain} → {completion_display}</h4>
-                <div style="padding: 0.5rem; background: white; border-radius: 4px; margin: 0.5rem 0;">
-                    <strong>Expected:</strong> {true_label} | <strong>Detected:</strong> {completion_display}
-                </div>
-            </div>
-            """,
-                unsafe_allow_html=True,
-            )
-
         # Auto-advance to next test after brief pause
-        time.sleep(2)
+        time.sleep(TEST_COMPLETION_DELAY)
         st.rerun()
 
     except Exception as e:
-        update_activity(f"❌ Error: {str(e)}")
-
-        # Add error result
-        test_result = {
-            "domain": domain,
-            "true_label": true_label,
-            "predicted_label": "Error",
-            "all_detected_providers": [],
-            "confidence": 0,
-            "primary_reason": f"Analysis failed: {str(e)}",
-            "correct": False,
-            "activity_log": list(activity_log),  # Create new list
-            "backend_data": {},
-            "ip_analysis": {},
-            "evidence": [],  # Empty evidence for error cases
-            "timestamp": time.time(),
-        }
-
-        st.session_state.test_results.append(test_result)
-        st.session_state.current_test_index += 1
-
-        time.sleep(2)
-        st.rerun()
+        handle_analysis_error(update_activity, domain, true_label, activity_log, str(e))
 
 
-def display_detailed_result(result: Dict):
+def show_analysis_progress(
+    update_activity, backend_data: Dict, ip_analysis: Dict, evidence_data: List
+) -> None:
+    """Show analysis progress updates."""
+    # Show subdomain discovery
+    if backend_data.get("app_subdomains"):
+        for subdomain in backend_data["app_subdomains"]:
+            update_activity(f"🏢 Found subdomain: {subdomain}")
+    else:
+        update_activity("🏢 No app subdomains discovered")
+
+    # Show XHR calls
+    if backend_data.get("xhr_api_calls"):
+        update_activity(
+            f"🔗 Discovered {len(backend_data['xhr_api_calls'])} XHR API calls"
+        )
+        for api in backend_data["xhr_api_calls"][:MAX_PREVIEW_ITEMS]:
+            update_activity(f"   📡 {api}")
+
+        # Show header analysis
+        update_activity("🛡️ Analyzing backend headers...")
+    else:
+        update_activity("🔗 No XHR API calls found")
+
+    # Show IP analysis
+    if ip_analysis.get("cloud_ip_matches"):
+        update_activity(
+            f"☁️ Found {len(ip_analysis['cloud_ip_matches'])} cloud IP matches"
+        )
+        for match in ip_analysis["cloud_ip_matches"][:MAX_PREVIEW_MATCHES]:
+            update_activity(
+                f"   📍 {match['ip']} → {match['provider']} ({match['ip_range']})"
+            )
+    elif ip_analysis.get("total_ips_checked", 0) > 0:
+        update_activity(
+            f"🔍 Checked {ip_analysis['total_ips_checked']} IPs - no cloud matches"
+        )
+
+    # Show direct cloud calls
+    if backend_data.get("cloud_provider_domains"):
+        update_activity(
+            f"☁️ Found {len(backend_data['cloud_provider_domains'])} direct cloud calls"
+        )
+        for call in backend_data["cloud_provider_domains"][:MAX_PREVIEW_MATCHES]:
+            if isinstance(call, tuple):
+                update_activity(f"   🎯 {call[0]} → {call[1]}")
+
+    # Show header analysis results
+    if evidence_data:
+        header_evidence = [
+            e for e in evidence_data if e.get("method") == "XHR API Headers"
+        ]
+        if header_evidence:
+            update_activity(
+                f"🛡️ Found backend headers: {len(header_evidence)} endpoints with cloud headers"
+            )
+            for evidence in header_evidence[:MAX_PREVIEW_MATCHES]:  # Show first 2
+                endpoint = evidence.get("details", {}).get("endpoint_url", "unknown")
+                provider = evidence.get("provider", "unknown")
+                update_activity(f"   🔍 {endpoint} → {provider} headers detected")
+
+
+def create_test_result(
+    domain: str,
+    true_label: str,
+    predicted_label: str,
+    all_detected_providers: List[str],
+    confidence: int,
+    primary_reason: str,
+    is_correct: bool,
+    activity_log: List[str],
+    backend_data: Dict,
+    ip_analysis: Dict,
+    evidence_data: List,
+) -> Dict:
+    """Create a test result object with isolated data."""
+    return {
+        "domain": domain,
+        "true_label": true_label,
+        "predicted_label": predicted_label,
+        "all_detected_providers": list(all_detected_providers),  # Create new list
+        "confidence": confidence,
+        "primary_reason": primary_reason,
+        "correct": is_correct and predicted_label not in ["Insufficient Data", "Error"],
+        "activity_log": list(activity_log),  # Create new list
+        "backend_data": backend_data,  # Already deep copied
+        "ip_analysis": ip_analysis,  # Already deep copied
+        "evidence": evidence_data,  # Deep copied evidence data
+        "timestamp": time.time(),
+    }
+
+
+def show_completion_status(
+    activity_placeholder,
+    domain: str,
+    true_label: str,
+    predicted_label: str,
+    all_detected_providers: List[str],
+    is_correct: bool,
+    status_emoji: str,
+) -> None:
+    """Show completion status for a domain test."""
+    completion_display = format_detected_providers(
+        all_detected_providers, predicted_label
+    )
+
+    # Show completed state briefly
+    status_class = (
+        "crawl-completed"
+        if is_correct
+        else "crawl-error"
+        if predicted_label != "Insufficient Data"
+        else "crawl-activity"
+    )
+
+    with activity_placeholder.container():
+        st.markdown(
+            f"""
+        <div class="crawl-activity {status_class}">
+            <h4>{status_emoji} Completed: {domain} → {completion_display}</h4>
+            <div style="padding: 0.5rem; background: white; border-radius: 4px; margin: 0.5rem 0;">
+                <strong>Expected:</strong> {true_label} | <strong>Detected:</strong> {completion_display}
+            </div>
+        </div>
+        """,
+            unsafe_allow_html=True,
+        )
+
+
+def handle_analysis_error(
+    update_activity,
+    domain: str,
+    true_label: str,
+    activity_log: List[str],
+    error_msg: str,
+) -> None:
+    """Handle analysis errors and create error result."""
+    update_activity(f"❌ Error: {error_msg}")
+
+    # Add error result
+    test_result = {
+        "domain": domain,
+        "true_label": true_label,
+        "predicted_label": "Error",
+        "all_detected_providers": [],
+        "confidence": 0,
+        "primary_reason": f"Analysis failed: {error_msg}",
+        "correct": False,
+        "activity_log": list(activity_log),  # Create new list
+        "backend_data": {},
+        "ip_analysis": {},
+        "evidence": [],  # Empty evidence for error cases
+        "timestamp": time.time(),
+    }
+
+    st.session_state.test_results.append(test_result)
+    st.session_state.current_test_index += 1
+
+    time.sleep(TEST_COMPLETION_DELAY)
+    st.rerun()
+
+
+def display_detailed_result(result: Dict) -> None:
     """Display a completed test result with full details always visible."""
     domain = result["domain"]
     true_label = result["true_label"]
@@ -676,31 +772,11 @@ def display_detailed_result(result: Dict):
     backend_data = result.get("backend_data", {})
     ip_analysis = result.get("ip_analysis", {})
 
-    # Status styling
-    if predicted_label == "Error":
-        status_emoji = "❌"
-        card_class = "result-card-wrong"
-        status_text = "ERROR"
-    elif predicted_label == "Insufficient Data":
-        status_emoji = "🔍"
-        card_class = "result-card-unknown"
-        status_text = "INSUFFICIENT DATA"
-    elif is_correct:
-        status_emoji = "✅"
-        card_class = "result-card-correct"
-        status_text = "CORRECT"
-    else:
-        status_emoji = "❌"
-        card_class = "result-card-wrong"
-        status_text = "WRONG"
-
-    # Format detected providers for header
-    if len(all_detected_providers) > 1:
-        detected_display = " + ".join(all_detected_providers)
-    elif len(all_detected_providers) == 1:
-        detected_display = all_detected_providers[0]
-    else:
-        detected_display = predicted_label
+    # Get status information
+    status_emoji, card_class, status_text = get_status_info(predicted_label, is_correct)
+    detected_display = format_detected_providers(
+        all_detected_providers, predicted_label
+    )
 
     # Create detailed result card
     st.markdown(
@@ -727,130 +803,145 @@ def display_detailed_result(result: Dict):
     col1, col2 = st.columns([1, 1])
 
     with col1:
-        # Subdomains section (exclude www.)
-        st.markdown('<div class="detail-section">', unsafe_allow_html=True)
-        st.markdown("**🏢 Subdomains Explored:**")
-        if backend_data.get("app_subdomains"):
-            # Filter out www. subdomains
-            filtered_subdomains = [
-                sub
-                for sub in backend_data["app_subdomains"]
-                if not sub.startswith("www.")
-            ]
-            if filtered_subdomains:
-                for subdomain in filtered_subdomains:
-                    st.markdown(
-                        f'<div class="subdomain-item">📍 {subdomain}</div>',
-                        unsafe_allow_html=True,
-                    )
-            else:
-                st.markdown("*No non-www subdomains discovered*")
-        else:
-            st.markdown("*No subdomains discovered*")
-        st.markdown("</div>", unsafe_allow_html=True)
-
-        # XHR API Calls section
-        st.markdown('<div class="detail-section">', unsafe_allow_html=True)
-        st.markdown("**🔗 XHR API Calls:**")
-        if backend_data.get("xhr_api_calls"):
-            for api in backend_data["xhr_api_calls"]:
-                st.markdown(
-                    f'<div class="api-call-item">📡 {api}</div>', unsafe_allow_html=True
-                )
-        else:
-            st.markdown("*No XHR API calls found*")
-        st.markdown("</div>", unsafe_allow_html=True)
+        render_subdomains_section(backend_data)
+        render_xhr_calls_section(backend_data)
 
     with col2:
-        # IP Analysis section
-        st.markdown('<div class="detail-section">', unsafe_allow_html=True)
-        st.markdown("**📍 IP Analysis & Cloud Matches:**")
-        if ip_analysis.get("cloud_ip_matches"):
-            for match in ip_analysis["cloud_ip_matches"]:
-                api_domain = match.get("api_domain", "unknown")
-                ip = match.get("ip", "unknown")
-                provider = match.get("provider", "unknown")
-                ip_range = match.get("ip_range", "unknown")
-                st.markdown(
-                    f'<div class="ip-match-item">☁️ <strong>{api_domain}</strong><br>IP: {ip} → {provider}<br>Range: {ip_range}</div>',
-                    unsafe_allow_html=True,
-                )
-        elif ip_analysis.get("total_ips_checked", 0) > 0:
-            st.markdown(
-                f"*Checked {ip_analysis['total_ips_checked']} IPs - no cloud matches*"
-            )
-        else:
-            st.markdown("*No IP analysis performed*")
-        st.markdown("</div>", unsafe_allow_html=True)
-
-        # Direct Cloud Calls section
-        st.markdown('<div class="detail-section">', unsafe_allow_html=True)
-        st.markdown("**☁️ Direct Cloud Provider Calls:**")
-        if backend_data.get("cloud_provider_domains"):
-            for call in backend_data["cloud_provider_domains"]:
-                if isinstance(call, tuple) and len(call) >= 2:
-                    domain_call, provider_name = call[0], call[1]
-                    service_type = call[2] if len(call) > 2 else ""
-                    service_text = f" ({service_type})" if service_type else ""
-                    st.markdown(
-                        f'<div class="api-call-item">🎯 {domain_call} → {provider_name}{service_text}</div>',
-                        unsafe_allow_html=True,
-                    )
-                else:
-                    st.markdown(
-                        f'<div class="api-call-item">🎯 {call}</div>',
-                        unsafe_allow_html=True,
-                    )
-        else:
-            st.markdown("*No direct cloud provider calls detected*")
-        st.markdown("</div>", unsafe_allow_html=True)
-
-        # Backend Headers Analysis section
-        st.markdown('<div class="detail-section">', unsafe_allow_html=True)
-        st.markdown("**🛡️ Backend Headers Analysis:**")
-
-        # Check if we have header evidence in the stored result data
-        header_evidence = []
-
-        # Try to get evidence from the stored result data structure
-        if result.get("evidence"):
-            header_evidence = [
-                e for e in result["evidence"] if e.get("method") == "XHR API Headers"
-            ]
-        elif result.get("details", {}).get("all_evidence"):
-            # Fallback to all evidence if direct evidence not available
-            all_evidence = result["details"]["all_evidence"]
-            header_evidence = [
-                e for e in all_evidence if e.get("method") == "XHR API Headers"
-            ]
-
-        if header_evidence:
-            for evidence in header_evidence:
-                endpoint = evidence.get("details", {}).get(
-                    "endpoint_url", "Unknown endpoint"
-                )
-                headers = evidence.get("details", {}).get("headers_found", [])
-                provider = evidence.get("provider", "Unknown")
-
-                st.markdown(
-                    f'<div class="ip-match-item">🛡️ <strong>{endpoint}</strong><br>Provider: {provider}<br>Headers: {len(headers)} found</div>',
-                    unsafe_allow_html=True,
-                )
-
-                # Show individual headers in a collapsible way
-                if headers:
-                    with st.expander(
-                        f"📋 View {len(headers)} headers from {endpoint}",
-                        expanded=False,
-                    ):
-                        for header in headers:
-                            st.code(header, language="text")
-        else:
-            st.markdown("*No backend-specific headers detected*")
-        st.markdown("</div>", unsafe_allow_html=True)
+        render_ip_analysis_section(ip_analysis)
+        render_cloud_calls_section(backend_data)
+        render_headers_section(result)
 
     st.markdown("</div>", unsafe_allow_html=True)
     st.markdown("---")
+
+
+def render_subdomains_section(backend_data: Dict) -> None:
+    """Render the subdomains section."""
+    st.markdown('<div class="detail-section">', unsafe_allow_html=True)
+    st.markdown("**🏢 Subdomains Explored:**")
+    if backend_data.get("app_subdomains"):
+        # Filter out www. subdomains
+        filtered_subdomains = [
+            sub for sub in backend_data["app_subdomains"] if not sub.startswith("www.")
+        ]
+        if filtered_subdomains:
+            for subdomain in filtered_subdomains:
+                st.markdown(
+                    f'<div class="subdomain-item">📍 {subdomain}</div>',
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.markdown("*No non-www subdomains discovered*")
+    else:
+        st.markdown("*No subdomains discovered*")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_xhr_calls_section(backend_data: Dict) -> None:
+    """Render the XHR API calls section."""
+    st.markdown('<div class="detail-section">', unsafe_allow_html=True)
+    st.markdown("**🔗 XHR API Calls:**")
+    if backend_data.get("xhr_api_calls"):
+        for api in backend_data["xhr_api_calls"]:
+            st.markdown(
+                f'<div class="api-call-item">📡 {api}</div>', unsafe_allow_html=True
+            )
+    else:
+        st.markdown("*No XHR API calls found*")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_ip_analysis_section(ip_analysis: Dict) -> None:
+    """Render the IP analysis section."""
+    st.markdown('<div class="detail-section">', unsafe_allow_html=True)
+    st.markdown("**📍 IP Analysis & Cloud Matches:**")
+    if ip_analysis.get("cloud_ip_matches"):
+        for match in ip_analysis["cloud_ip_matches"]:
+            api_domain = match.get("api_domain", "unknown")
+            ip = match.get("ip", "unknown")
+            provider = match.get("provider", "unknown")
+            ip_range = match.get("ip_range", "unknown")
+            st.markdown(
+                f'<div class="ip-match-item">☁️ <strong>{api_domain}</strong><br>IP: {ip} → {provider}<br>Range: {ip_range}</div>',
+                unsafe_allow_html=True,
+            )
+    elif ip_analysis.get("total_ips_checked", 0) > 0:
+        st.markdown(
+            f"*Checked {ip_analysis['total_ips_checked']} IPs - no cloud matches*"
+        )
+    else:
+        st.markdown("*No IP analysis performed*")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_cloud_calls_section(backend_data: Dict) -> None:
+    """Render the direct cloud calls section."""
+    st.markdown('<div class="detail-section">', unsafe_allow_html=True)
+    st.markdown("**☁️ Direct Cloud Provider Calls:**")
+    if backend_data.get("cloud_provider_domains"):
+        for call in backend_data["cloud_provider_domains"]:
+            if isinstance(call, tuple) and len(call) >= 2:
+                domain_call, provider_name = call[0], call[1]
+                service_type = call[2] if len(call) > 2 else ""
+                service_text = f" ({service_type})" if service_type else ""
+                st.markdown(
+                    f'<div class="api-call-item">🎯 {domain_call} → {provider_name}{service_text}</div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    f'<div class="api-call-item">🎯 {call}</div>',
+                    unsafe_allow_html=True,
+                )
+    else:
+        st.markdown("*No direct cloud provider calls detected*")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_headers_section(result: Dict) -> None:
+    """Render the backend headers analysis section."""
+    st.markdown('<div class="detail-section">', unsafe_allow_html=True)
+    st.markdown("**🛡️ Backend Headers Analysis:**")
+
+    # Check if we have header evidence in the stored result data
+    header_evidence = []
+
+    # Try to get evidence from the stored result data structure
+    if result.get("evidence"):
+        header_evidence = [
+            e for e in result["evidence"] if e.get("method") == "XHR API Headers"
+        ]
+    elif result.get("details", {}).get("all_evidence"):
+        # Fallback to all evidence if direct evidence not available
+        all_evidence = result["details"]["all_evidence"]
+        header_evidence = [
+            e for e in all_evidence if e.get("method") == "XHR API Headers"
+        ]
+
+    if header_evidence:
+        for evidence in header_evidence:
+            endpoint = evidence.get("details", {}).get(
+                "endpoint_url", "Unknown endpoint"
+            )
+            headers = evidence.get("details", {}).get("headers_found", [])
+            provider = evidence.get("provider", "Unknown")
+
+            st.markdown(
+                f'<div class="ip-match-item">🛡️ <strong>{endpoint}</strong><br>Provider: {provider}<br>Headers: {len(headers)} found</div>',
+                unsafe_allow_html=True,
+            )
+
+            # Show individual headers in a collapsible way
+            if headers:
+                with st.expander(
+                    f"📋 View {len(headers)} headers from {endpoint}",
+                    expanded=False,
+                ):
+                    for header in headers:
+                        st.code(header, language="text")
+    else:
+        st.markdown("*No backend-specific headers detected*")
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 if __name__ == "__main__":

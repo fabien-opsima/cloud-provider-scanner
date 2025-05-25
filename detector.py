@@ -22,6 +22,7 @@ import json
 import os
 import asyncio
 import sys
+import logging
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
 import pandas as pd
@@ -34,6 +35,12 @@ from sklearn.metrics import (
 
 import requests
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
+
 # Try to import playwright and install browsers if needed
 try:
     from playwright.async_api import async_playwright
@@ -43,8 +50,6 @@ try:
     # Test if browsers are actually available and install if needed
     try:
         import subprocess
-        import sys
-        import os
 
         # Check if we're in a deployment environment (like Streamlit Cloud)
         is_deployment = os.environ.get("STREAMLIT_SHARING_MODE") or os.environ.get(
@@ -66,7 +71,7 @@ try:
 
         # If browsers aren't available, try to install them
         if not BROWSERS_AVAILABLE:
-            print("Browsers not detected, attempting installation...")
+            logger.info("Browsers not detected, attempting installation...")
             try:
                 # Install browsers
                 install_result = subprocess.run(
@@ -77,7 +82,7 @@ try:
                 )
 
                 if install_result.returncode == 0:
-                    print("Browser installation successful!")
+                    logger.info("Browser installation successful!")
                     # Test again after installation
                     test_result = subprocess.run(
                         [
@@ -91,32 +96,34 @@ try:
                     )
                     BROWSERS_AVAILABLE = test_result.returncode == 0
                     if BROWSERS_AVAILABLE:
-                        print("Browser test successful after installation!")
+                        logger.info("Browser test successful after installation!")
                     else:
-                        print(
+                        logger.warning(
                             "Browser test failed after installation, using IP-only mode"
                         )
                 else:
-                    print(f"Browser installation failed: {install_result.stderr}")
+                    logger.error(
+                        f"Browser installation failed: {install_result.stderr}"
+                    )
                     BROWSERS_AVAILABLE = False
 
             except Exception as e:
-                print(f"Browser installation error: {e}")
+                logger.error(f"Browser installation error: {e}")
                 BROWSERS_AVAILABLE = False
 
         if not BROWSERS_AVAILABLE:
-            print("Note: Using IP-only analysis mode (most reliable method)")
+            logger.info("Note: Using IP-only analysis mode (most reliable method)")
         else:
-            print("Full browser-enabled analysis mode active")
+            logger.info("Full browser-enabled analysis mode active")
 
     except Exception as e:
-        print(f"Browser availability check failed: {e}")
+        logger.error(f"Browser availability check failed: {e}")
         BROWSERS_AVAILABLE = False
 
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
     BROWSERS_AVAILABLE = False
-    print("Note: Playwright not available - using IP-only analysis mode")
+    logger.info("Note: Playwright not available - using IP-only analysis mode")
 
 
 class CloudProviderDetector:
@@ -352,7 +359,7 @@ class CloudProviderDetector:
 
     def load_local_ip_ranges(self):
         """Load IP ranges from local JSON files."""
-        print("Loading cloud provider IP ranges from local files...")
+        logger.info("Loading cloud provider IP ranges from local files...")
 
         data_dir = os.path.join(os.path.dirname(__file__), "data")
 
@@ -363,9 +370,9 @@ class CloudProviderDetector:
                 self.ip_ranges["AWS"] = [
                     item["ip_prefix"] for item in aws_data["prefixes"]
                 ]
-                print(f"Loaded {len(self.ip_ranges['AWS'])} AWS IP ranges")
+                logger.info(f"Loaded {len(self.ip_ranges['AWS'])} AWS IP ranges")
         except Exception as e:
-            print(f"Failed to load AWS IP ranges: {e}")
+            logger.error(f"Failed to load AWS IP ranges: {e}")
             self.ip_ranges["AWS"] = []
 
         # Load GCP IP ranges
@@ -377,9 +384,9 @@ class CloudProviderDetector:
                     for item in gcp_data["prefixes"]
                     if "ipv4Prefix" in item
                 ]
-                print(f"Loaded {len(self.ip_ranges['GCP'])} GCP IP ranges")
+                logger.info(f"Loaded {len(self.ip_ranges['GCP'])} GCP IP ranges")
         except Exception as e:
-            print(f"Failed to load GCP IP ranges: {e}")
+            logger.error(f"Failed to load GCP IP ranges: {e}")
             self.ip_ranges["GCP"] = []
 
         # Load Azure IP ranges
@@ -397,9 +404,9 @@ class CloudProviderDetector:
                             if ":" not in prefix:
                                 azure_prefixes.append(prefix)
                 self.ip_ranges["Azure"] = azure_prefixes
-                print(f"Loaded {len(self.ip_ranges['Azure'])} Azure IP ranges")
+                logger.info(f"Loaded {len(self.ip_ranges['Azure'])} Azure IP ranges")
         except Exception as e:
-            print(f"Failed to load Azure IP ranges: {e}")
+            logger.error(f"Failed to load Azure IP ranges: {e}")
             self.ip_ranges["Azure"] = []
 
     def is_advertising_service(self, domain: str) -> bool:
@@ -444,7 +451,7 @@ class CloudProviderDetector:
                     except:
                         continue
         except Exception as e:
-            print(f"Failed to resolve {domain}: {e}")
+            logger.error(f"Failed to resolve {domain}: {e}")
         return ips
 
     def check_ip_against_cloud_ranges(self, ip: str) -> Optional[Dict[str, str]]:
@@ -486,7 +493,7 @@ class CloudProviderDetector:
             backend_data["processing_log"].append(
                 "❌ Browser not available - cannot perform deep XHR analysis"
             )
-            print("Browser not available - cannot perform deep XHR analysis")
+            logger.info("Browser not available - cannot perform deep XHR analysis")
             return backend_data
 
         browser = None
@@ -526,7 +533,7 @@ class CloudProviderDetector:
                                 backend_data["processing_log"].append(
                                     f"  🚫 Skipping advertising service: {request_domain}"
                                 )
-                                print(
+                                logger.info(
                                     f"  🚫 Skipping advertising service: {request_domain}"
                                 )
                                 return
@@ -537,7 +544,9 @@ class CloudProviderDetector:
                                 backend_data["processing_log"].append(
                                     f"  🔍 XHR to same-domain API: {request_domain}"
                                 )
-                                print(f"  🔍 XHR to same-domain API: {request_domain}")
+                                logger.info(
+                                    f"  🔍 XHR to same-domain API: {request_domain}"
+                                )
 
                                 # Track which page/subdomain found this XHR call
                                 current_page_domain = (
@@ -571,7 +580,7 @@ class CloudProviderDetector:
                                     backend_data["processing_log"].append(
                                         f"  ☁️ XHR to AWS {service_type}: {request_domain}"
                                     )
-                                    print(
+                                    logger.info(
                                         f"  ☁️ XHR to AWS {service_type}: {request_domain}"
                                     )
 
@@ -603,7 +612,7 @@ class CloudProviderDetector:
                                         backend_data["processing_log"].append(
                                             f"  ☁️ XHR to GCP {service_type}: {request_domain}"
                                         )
-                                        print(
+                                        logger.info(
                                             f"  ☁️ XHR to GCP {service_type}: {request_domain}"
                                         )
                                     else:
@@ -614,14 +623,14 @@ class CloudProviderDetector:
                                             backend_data["processing_log"].append(
                                                 f"  🔤 Skipping Google Fonts API: {request_domain}"
                                             )
-                                            print(
+                                            logger.info(
                                                 f"  🔤 Skipping Google Fonts API: {request_domain}"
                                             )
                                         else:
                                             backend_data["processing_log"].append(
                                                 f"  🗺️ Skipping Google Maps API: {request_domain}"
                                             )
-                                            print(
+                                            logger.info(
                                                 f"  🗺️ Skipping Google Maps API: {request_domain}"
                                             )
 
@@ -643,7 +652,7 @@ class CloudProviderDetector:
                                     backend_data["processing_log"].append(
                                         f"  ☁️ XHR to Azure {service_type}: {request_domain}"
                                     )
-                                    print(
+                                    logger.info(
                                         f"  ☁️ XHR to Azure {service_type}: {request_domain}"
                                     )
 
@@ -654,7 +663,7 @@ class CloudProviderDetector:
 
                 # 1. Start with the main page - spend more time here
                 backend_data["processing_log"].append(f"  📄 Loading main page: {url}")
-                print(f"  📄 Loading main page: {url}")
+                logger.info(f"  📄 Loading main page: {url}")
                 await page.goto(url, wait_until="networkidle", timeout=20000)
                 await page.wait_for_timeout(5000)  # Wait longer for initial API calls
 
@@ -688,7 +697,7 @@ class CloudProviderDetector:
                 backend_data["processing_log"].append(
                     "  🔗 Discovering app subdomains..."
                 )
-                print("  🔗 Discovering app subdomains...")
+                logger.info("  🔗 Discovering app subdomains...")
 
                 # Find app links on the main page
                 app_links = await page.evaluate("""() => {
@@ -764,7 +773,7 @@ class CloudProviderDetector:
                 backend_data["processing_log"].append(
                     f"  📋 Found {len(app_links)} potential app links, testing {len(all_app_urls)} total URLs"
                 )
-                print(
+                logger.info(
                     f"  📋 Found {len(app_links)} potential app links, testing {len(all_app_urls)} total URLs"
                 )
 
@@ -777,7 +786,7 @@ class CloudProviderDetector:
                         backend_data["processing_log"].append(
                             f"  🚀 [{i + 1}/{min(10, len(all_app_urls))}] Exploring: {app_url}"
                         )
-                        print(
+                        logger.info(
                             f"  🚀 [{i + 1}/{min(10, len(all_app_urls))}] Exploring: {app_url}"
                         )
 
@@ -843,13 +852,13 @@ class CloudProviderDetector:
                             backend_data["processing_log"].append(
                                 f"    ✅ Successfully explored {app_domain}"
                             )
-                            print(f"    ✅ Successfully explored {app_domain}")
+                            logger.info(f"    ✅ Successfully explored {app_domain}")
 
                     except Exception as e:
                         backend_data["processing_log"].append(
                             f"    ❌ Failed to load {app_url}: {str(e)[:100]}"
                         )
-                        print(f"    ❌ Failed to load {app_url}: {e}")
+                        logger.error(f"    ❌ Failed to load {app_url}: {e}")
                         continue
 
                 # 4. Store subdomain details for better reporting
@@ -868,7 +877,7 @@ class CloudProviderDetector:
                 backend_data["processing_log"].append(
                     f"  🎯 Resolving IPs for {len(backend_data['xhr_api_calls'])} XHR APIs..."
                 )
-                print(
+                logger.info(
                     f"  🎯 Resolving IPs for {len(backend_data['xhr_api_calls'])} XHR APIs..."
                 )
 
@@ -892,7 +901,7 @@ class CloudProviderDetector:
                 backend_data["processing_log"].append(
                     f"  ✅ Discovery complete: {len(backend_data['xhr_api_calls'])} XHR APIs, {len(backend_data['cloud_provider_domains'])} cloud calls from {len(successful_subdomains)} subdomains"
                 )
-                print(
+                logger.info(
                     f"  ✅ Discovery complete: {len(backend_data['xhr_api_calls'])} XHR APIs, {len(backend_data['cloud_provider_domains'])} cloud calls from {len(successful_subdomains)} subdomains"
                 )
 
@@ -900,7 +909,7 @@ class CloudProviderDetector:
             backend_data["processing_log"].append(
                 f"  ❌ App discovery failed: {str(e)}"
             )
-            print(f"  ❌ App discovery failed: {e}")
+            logger.error(f"  ❌ App discovery failed: {e}")
         finally:
             if browser:
                 try:
@@ -1000,22 +1009,22 @@ class CloudProviderDetector:
                                 "headers": provider_headers,
                                 "score": provider_score,
                             }
-                            print(
+                            logger.info(
                                 f"  🛡️ Found {provider} backend headers in {api_domain}:"
                             )
                             for header in provider_headers:
-                                print(f"    • {header}")
+                                logger.info(f"    • {header}")
 
                     # Store evidence for all providers found
                     for provider, evidence in found_evidence.items():
                         header_evidence.append(evidence)
 
                 except Exception as e:
-                    print(f"  ❌ Header check failed for {api_domain}: {e}")
+                    logger.error(f"  ❌ Header check failed for {api_domain}: {e}")
                     continue
 
         except Exception as e:
-            print(f"XHR header analysis failed: {e}")
+            logger.error(f"XHR header analysis failed: {e}")
 
         # Store header evidence for later use in reason generation
         self._header_evidence = header_evidence
@@ -1084,7 +1093,7 @@ class CloudProviderDetector:
 
     async def analyze_website(self, url: str) -> Dict[str, any]:
         """Analyze website focusing exclusively on XHR/API calls from app subdomains with comprehensive IP range matching."""
-        print(f"🔍 Analyzing backend infrastructure for: {url}")
+        logger.info(f"🔍 Analyzing backend infrastructure for: {url}")
 
         result = {
             "url": url,
@@ -1105,7 +1114,7 @@ class CloudProviderDetector:
             evidence_list = []
 
             # 1. XHR/API Discovery from App Subdomains (PRIMARY Analysis)
-            print("  🚀 Discovering app subdomains and XHR API calls...")
+            logger.info("  🚀 Discovering app subdomains and XHR API calls...")
             backend_data = await self.discover_app_subdomains_and_apis(url)
             result["details"]["backend_data"] = backend_data
 
@@ -1116,7 +1125,7 @@ class CloudProviderDetector:
             all_ip_details = {}
 
             if backend_data["api_ips"]:
-                print(
+                logger.info(
                     f"  🎯 Analyzing {len(backend_data['api_ips'])} API endpoint IPs for cloud provider ranges..."
                 )
 
@@ -1170,11 +1179,11 @@ class CloudProviderDetector:
                                 },
                             }
                         )
-                        print(
+                        logger.info(
                             f"  ✅ CLOUD MATCH: {api_domain} → {provider} (IP {ip} in {ip_info['range']})"
                         )
                     else:
-                        print(
+                        logger.info(
                             f"  ❌ No cloud match: {api_domain} → {ip} (not in known cloud ranges)"
                         )
 
@@ -1187,18 +1196,18 @@ class CloudProviderDetector:
                 }
 
                 if ip_matches:
-                    print(
+                    logger.info(
                         f"  📊 IP Analysis Summary: {len(ip_matches)}/{len(backend_data['api_ips'])} IPs matched cloud ranges"
                     )
                 else:
-                    print(
+                    logger.info(
                         f"  📊 IP Analysis Summary: 0/{len(backend_data['api_ips'])} IPs matched cloud ranges - no cloud backend detected"
                     )
 
             # 1b. Direct cloud provider domain calls from XHR (60 points)
             cloud_provider_calls = backend_data.get("cloud_provider_domains", [])
             if cloud_provider_calls:
-                print(
+                logger.info(
                     f"  ☁️ Found {len(cloud_provider_calls)} direct cloud provider XHR calls..."
                 )
                 for cloud_call_info in cloud_provider_calls:
@@ -1222,13 +1231,13 @@ class CloudProviderDetector:
                                 },
                             }
                         )
-                        print(
+                        logger.info(
                             f"  ✅ Direct cloud call: {cloud_domain} → {provider} {service_type}"
                         )
 
             # 2. XHR API Headers Analysis (40 points)
             if backend_data["xhr_api_calls"]:
-                print(
+                logger.info(
                     f"  🛡️ Analyzing headers from {len(backend_data['xhr_api_calls'])} XHR API endpoints..."
                 )
                 header_scores = await self.analyze_xhr_headers(
@@ -1321,7 +1330,7 @@ class CloudProviderDetector:
                         e for e in evidence_list if e["provider"] == primary_provider
                     ]
 
-                    print(
+                    logger.info(
                         f"  ✅ HIGH CONFIDENCE DETECTION: {primary_provider} ({confidence_score}% confidence)"
                     )
 
@@ -1336,7 +1345,7 @@ class CloudProviderDetector:
                         evidence_list  # Show all evidence but don't classify
                     )
 
-                    print(
+                    logger.info(
                         f"  ⚠️ LOW CONFIDENCE: Found {primary_provider} evidence but only {confidence_score}% confidence"
                     )
 
@@ -1348,7 +1357,7 @@ class CloudProviderDetector:
                         "No XHR API evidence found for classification"
                     )
 
-                    print("  ❌ No evidence found")
+                    logger.info("  ❌ No evidence found")
 
                 result["details"]["provider_scores"] = provider_scores
                 result["details"]["all_evidence"] = evidence_list
@@ -1362,16 +1371,20 @@ class CloudProviderDetector:
                 # Detailed summary stats
                 classified_as = result["primary_cloud_provider"]
                 confidence = result["confidence_score"]
-                print(
+                logger.info(
                     f"  📊 Analysis complete: {classified_as} ({confidence}% confidence)"
                 )
-                print(f"    - XHR APIs found: {len(backend_data['xhr_api_calls'])}")
-                print(f"    - App subdomains: {len(backend_data['app_subdomains'])}")
-                print(
+                logger.info(
+                    f"    - XHR APIs found: {len(backend_data['xhr_api_calls'])}"
+                )
+                logger.info(
+                    f"    - App subdomains: {len(backend_data['app_subdomains'])}"
+                )
+                logger.info(
                     f"    - Cloud XHR calls: {len(backend_data['cloud_provider_domains'])}"
                 )
                 if result.get("ip_analysis"):
-                    print(
+                    logger.info(
                         f"    - IP matches: {result['ip_analysis'].get('cloud_matches', 0)}/{result['ip_analysis'].get('total_ips_checked', 0)}"
                     )
 
@@ -1382,12 +1395,12 @@ class CloudProviderDetector:
                 result["primary_reason"] = (
                     "No XHR API endpoints found in app subdomains - cannot determine cloud provider"
                 )
-                print("  ❌ No backend cloud infrastructure detected")
+                logger.info("  ❌ No backend cloud infrastructure detected")
 
         except Exception as e:
             result["details"]["error"] = str(e)
             result["primary_reason"] = f"XHR analysis failed: {str(e)}"
-            print(f"  ❌ Error analyzing {url}: {e}")
+            logger.error(f"  ❌ Error analyzing {url}: {e}")
 
         return result
 
@@ -1440,7 +1453,7 @@ class CloudProviderDetector:
         if test_file_path is None:
             test_file_path = os.path.join(os.path.dirname(__file__), "data", "test.csv")
 
-        print(f"Running test with file: {test_file_path}")
+        logger.info(f"Running test with file: {test_file_path}")
 
         try:
             # Load test data
@@ -1448,7 +1461,7 @@ class CloudProviderDetector:
 
             # Shuffle the test data to ensure random order each time
             df = df.sample(frac=1).reset_index(drop=True)
-            print(f"Shuffled {len(df)} test domains for random order")
+            logger.info(f"Shuffled {len(df)} test domains for random order")
 
             # Run analysis on test domains
             predictions = []
@@ -1477,13 +1490,13 @@ class CloudProviderDetector:
                 # Track insufficient data cases separately
                 if predicted_label == "Insufficient Data":
                     insufficient_data_count += 1
-                    print(
+                    logger.info(
                         f"Domain: {domain}, True: {true_label}, Predicted: {predicted_label} (excluded from accuracy)"
                     )
                 else:
                     predictions.append(predicted_label)
                     true_labels.append(true_label)
-                    print(
+                    logger.info(
                         f"Domain: {domain}, True: {true_label}, Predicted: {predicted_label}"
                     )
 
@@ -1552,7 +1565,7 @@ class CloudProviderDetector:
             }
 
         except Exception as e:
-            print(f"Test failed: {e}")
+            logger.error(f"Test failed: {e}")
             return None
 
     def _identify_aws_service(self, domain: str) -> str:
@@ -1647,4 +1660,4 @@ if __name__ == "__main__":
 
     # Example usage
     result = asyncio.run(detector.analyze_website("example.com"))
-    print(f"Result: {result}")
+    logger.info(f"Result: {result}")
