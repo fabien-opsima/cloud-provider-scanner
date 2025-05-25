@@ -240,19 +240,6 @@ def main():
             unsafe_allow_html=True,
         )
 
-        # Keep-alive indicator
-        if "keep_alive_counter" in st.session_state:
-            st.markdown(f"🔄 **Keep-Alive:** {st.session_state.keep_alive_counter}")
-
-        st.markdown("### ✨ Features")
-        st.markdown("""
-        - **Complete History:** All results always visible
-        - **Partial Matching:** AWS+GCP detection counts as AWS match
-        - **Full Details:** Every subdomain, API call, and IP shown
-        - **Live Updates:** Real-time crawling activity
-        - **Auto Keep-Alive:** Server stays active
-        """)
-
         # Test controls
         st.markdown("### 🚀 Test Controls")
 
