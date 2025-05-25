@@ -101,11 +101,11 @@ def main():
     with st.sidebar:
         st.header("⚙️ Configuration")
 
-        # Mode selection
+        # Mode selection - default to test page
         mode = st.selectbox(
             "Select Mode",
-            ["📊 Analyze Domains", "🧪 Run Accuracy Test"],
-            help="Choose between analyzing new domains or testing accuracy against labeled data",
+            ["🧪 Run Accuracy Test", "📊 Analyze Domains"],
+            help="Choose between testing accuracy against labeled data or analyzing new domains",
         )
 
         if mode == "📊 Analyze Domains":
@@ -179,13 +179,8 @@ def analyze_domains_interface(uploaded_file, domain_column, headless_mode):
     with col1:
         st.subheader("📤 Upload & Analyze")
 
-        # Auto-load sample data when the app starts (default behavior)
-        auto_load_sample = uploaded_file is None and not hasattr(
-            st.session_state, "sample_data_loaded"
-        )
-
-        # Check if we should use sample data (either auto-load or user clicked button)
-        if getattr(st.session_state, "use_sample_data", False) or auto_load_sample:
+        # Check if we should use sample data (only when user clicked button, no auto-load)
+        if getattr(st.session_state, "use_sample_data", False):
             # Create sample data
             sample_data = pd.DataFrame(
                 {
@@ -203,13 +198,7 @@ def analyze_domains_interface(uploaded_file, domain_column, headless_mode):
                     ]
                 }
             )
-            if auto_load_sample:
-                st.info(
-                    "✨ Sample test data loaded automatically! You can upload your own CSV file above to analyze different domains."
-                )
-                st.session_state.sample_data_loaded = True
-            else:
-                st.success("✅ Sample data loaded!")
+            st.success("✅ Sample data loaded!")
             process_domains(sample_data, "domain", headless_mode)
 
         elif uploaded_file is not None:
@@ -238,12 +227,14 @@ def analyze_domains_interface(uploaded_file, domain_column, headless_mode):
         else:
             # Instructions when no file is uploaded
             st.info("""
-            👆 **Upload a CSV file** to get started or use sample data
+            👆 **Upload a CSV file** to analyze your own domains or use sample data
             
             **CSV Requirements:**
             - Must contain a column with domain names
             - Domains can be with or without http/https prefix
             - Example: `netflix.com`, `https://spotify.com`
+            
+            💡 **Tip:** Switch to "🧪 Run Accuracy Test" mode to test the detector against labeled data!
             """)
 
     with col2:
@@ -296,6 +287,12 @@ def test_accuracy_interface(headless_mode):
         st.markdown("""
         Test the accuracy of the cloud provider detection against labeled data.
         This uses the `test.csv` file in the data directory.
+        
+        **🌐 See Browser Exploration in Real-Time:**
+        - Watch as subdomains are discovered and explored
+        - View XHR API calls being captured live
+        - See IP analysis and cloud provider detection
+        - Monitor page navigation and interaction details
         """)
 
         if st.button("🚀 Run Accuracy Test", type="primary"):
@@ -511,6 +508,14 @@ def run_accuracy_test(headless_mode: bool):
 
     # Create placeholders for live updates
     current_result_placeholder = st.empty()
+
+    # Add browser exploration display
+    st.subheader("🌐 Browser Exploration Details")
+    browser_exploration_container = st.container()
+    exploration_details = st.expander(
+        "🔍 **Current Domain Exploration**", expanded=True
+    )
+
     test_results_table = st.empty()
     test_summary_metrics = st.empty()
 
@@ -547,10 +552,75 @@ def run_accuracy_test(headless_mode: bool):
             current_result_placeholder.info(f"🔄 **Currently testing:** `{domain}`")
 
             try:
+                # Show browser exploration details
+                with browser_exploration_container:
+                    st.info(
+                        f"🔄 **Exploring:** `{domain}` - Starting browser analysis..."
+                    )
+
+                with exploration_details:
+                    st.write(f"🌐 **Starting analysis of:** `{domain}`")
+                    exploration_status = st.empty()
+                    exploration_progress = st.empty()
+
                 # Run analysis
                 result = asyncio.run(detector.analyze_website(domain))
                 predicted_label = result["primary_cloud_provider"]
                 primary_reason = result.get("primary_reason", "No reason provided")
+
+                # Show exploration results
+                backend_data = result.get("details", {}).get("backend_data", {})
+                ip_analysis = result.get("ip_analysis", {})
+
+                with exploration_details:
+                    # Show discovered subdomains
+                    if backend_data.get("app_subdomains"):
+                        st.success(
+                            f"🏢 **App Subdomains Explored:** {len(backend_data['app_subdomains'])}"
+                        )
+                        for subdomain in backend_data["app_subdomains"]:
+                            st.write(f"   📍 {subdomain}")
+                    else:
+                        st.info("🏢 **No app subdomains found**")
+
+                    # Show XHR API calls discovered
+                    if backend_data.get("xhr_api_calls"):
+                        st.success(
+                            f"🔗 **XHR API Calls Discovered:** {len(backend_data['xhr_api_calls'])}"
+                        )
+                        for api in backend_data["xhr_api_calls"][:5]:  # Show first 5
+                            st.write(f"   🔗 {api}")
+                        if len(backend_data["xhr_api_calls"]) > 5:
+                            st.write(
+                                f"   *(and {len(backend_data['xhr_api_calls']) - 5} more)*"
+                            )
+                    else:
+                        st.info("🔗 **No XHR API calls found**")
+
+                    # Show IP analysis results
+                    if ip_analysis.get("cloud_ip_matches"):
+                        st.success(
+                            f"☁️ **Cloud IP Matches:** {len(ip_analysis['cloud_ip_matches'])}"
+                        )
+                        for match in ip_analysis["cloud_ip_matches"][:3]:
+                            st.write(
+                                f"   • `{match['api_domain']}` → {match['provider']} (IP: {match['ip']})"
+                            )
+                    elif ip_analysis.get("total_ips_checked", 0) > 0:
+                        st.info(
+                            f"🔍 **IPs Checked:** {ip_analysis['total_ips_checked']} (no cloud matches)"
+                        )
+
+                    # Show direct cloud calls
+                    if backend_data.get("cloud_provider_domains"):
+                        st.success(
+                            f"☁️ **Direct Cloud Calls:** {len(backend_data['cloud_provider_domains'])}"
+                        )
+                        for call in backend_data["cloud_provider_domains"][:3]:
+                            if isinstance(call, tuple) and len(call) >= 2:
+                                st.write(f"   • {call[0]} → {call[1]}")
+
+                    st.markdown("---")
 
                 # Create test result object
                 test_result = {
