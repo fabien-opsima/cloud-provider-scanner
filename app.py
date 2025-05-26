@@ -669,7 +669,54 @@ def create_test_result(
     ip_analysis: Dict,
     evidence_data: List,
 ) -> Dict:
-    """Create a test result object with isolated data."""
+    """Create a test result object with completely isolated data."""
+
+    # Extract base domain for filtering
+    base_domain = domain
+    if domain.startswith("www."):
+        base_domain = domain[4:]
+
+    # CRITICAL FIX: Filter evidence to only include data for this specific domain
+    filtered_evidence = []
+    for evidence in evidence_data:
+        # Only include evidence that relates to the current domain
+        if evidence.get("method") == "XHR API Headers":
+            endpoint = evidence.get("details", {}).get("endpoint_url", "")
+            if (
+                endpoint
+                and base_domain
+                and (
+                    base_domain in endpoint
+                    or endpoint.endswith(f".{base_domain}")
+                    or endpoint == base_domain
+                )
+            ):
+                # Deep copy the evidence to prevent sharing
+                filtered_evidence.append(copy.deepcopy(evidence))
+        else:
+            # For non-header evidence, include all (IP analysis, etc.)
+            filtered_evidence.append(copy.deepcopy(evidence))
+
+    # Filter backend_data to only include domain-specific data
+    filtered_backend_data = copy.deepcopy(backend_data)
+    if filtered_backend_data.get("xhr_api_calls"):
+        filtered_backend_data["xhr_api_calls"] = [
+            api for api in filtered_backend_data["xhr_api_calls"] if base_domain in api
+        ]
+    if filtered_backend_data.get("app_subdomains"):
+        filtered_backend_data["app_subdomains"] = [
+            sub for sub in filtered_backend_data["app_subdomains"] if base_domain in sub
+        ]
+
+    # Filter IP analysis to only include domain-specific matches
+    filtered_ip_analysis = copy.deepcopy(ip_analysis)
+    if filtered_ip_analysis.get("cloud_ip_matches"):
+        filtered_ip_analysis["cloud_ip_matches"] = [
+            match
+            for match in filtered_ip_analysis["cloud_ip_matches"]
+            if base_domain in match.get("api_domain", "")
+        ]
+
     return {
         "domain": domain,
         "true_label": true_label,
@@ -679,9 +726,9 @@ def create_test_result(
         "primary_reason": primary_reason,
         "correct": is_correct and predicted_label != "Insufficient Data",
         "activity_log": list(activity_log),  # Create new list
-        "backend_data": backend_data,  # Already deep copied
-        "ip_analysis": ip_analysis,  # Already deep copied
-        "evidence": evidence_data,  # Deep copied evidence data
+        "backend_data": filtered_backend_data,  # Domain-filtered data
+        "ip_analysis": filtered_ip_analysis,  # Domain-filtered data
+        "evidence": filtered_evidence,  # Domain-filtered evidence
         "timestamp": time.time(),
     }
 
@@ -773,93 +820,148 @@ def display_detailed_result(result: Dict) -> None:
         all_detected_providers, predicted_label
     )
 
-    # Create detailed result card
-    st.markdown(
-        f"""
-    <div class="result-card {card_class}">
-        <h4>{status_emoji} {domain} → {detected_display} ({status_text})</h4>
-        <div style="margin: 0.5rem 0;">
-            <strong>Expected:</strong> {true_label} | 
-            <strong>Detected:</strong> {detected_display}
-        </div>
-    """,
-        unsafe_allow_html=True,
-    )
+    # Use a proper Streamlit container for the card
+    with st.container():
+        # Apply CSS class using st.markdown with a container
+        st.markdown(f'<div class="result-card {card_class}">', unsafe_allow_html=True)
 
-    # Show all detected providers if multiple
-    if len(all_detected_providers) > 1:
-        providers_text = ", ".join(all_detected_providers)
-        st.markdown(f"**🔍 All Detected Providers:** {providers_text}")
+        # Header information
+        st.markdown(f"### {status_emoji} {domain} → {detected_display} ({status_text})")
+        st.markdown(f"**Expected:** {true_label} | **Detected:** {detected_display}")
 
-    # Show primary reason
-    st.markdown(f"**💡 Primary Reason:** {result['primary_reason']}")
+        # Show all detected providers if multiple
+        if len(all_detected_providers) > 1:
+            providers_text = ", ".join(all_detected_providers)
+            st.markdown(f"**🔍 All Detected Providers:** {providers_text}")
 
-    # Detailed sections
-    col1, col2 = st.columns([1, 1])
+        # Show primary reason
+        st.markdown(f"**💡 Primary Reason:** {result['primary_reason']}")
 
-    with col1:
-        render_subdomains_section(backend_data)
-        render_xhr_calls_section(backend_data)
+        # Detailed sections in columns
+        col1, col2 = st.columns([1, 1])
 
-    with col2:
-        render_ip_analysis_section(ip_analysis)
-        render_cloud_calls_section(backend_data)
-        render_headers_section(result)
+        with col1:
+            render_subdomains_section(backend_data, domain)
+            render_xhr_calls_section(backend_data, domain)
 
-    st.markdown("</div>", unsafe_allow_html=True)
+        with col2:
+            render_ip_analysis_section(ip_analysis, domain)
+            render_cloud_calls_section(backend_data)
+            render_headers_section(result)
+
+        # Close the card div
+        st.markdown("</div>", unsafe_allow_html=True)
+
     st.markdown("---")
 
 
-def render_subdomains_section(backend_data: Dict) -> None:
-    """Render the subdomains section."""
+def render_subdomains_section(backend_data: Dict, current_domain: str) -> None:
+    """Render the subdomains section with strict domain filtering."""
     st.markdown('<div class="detail-section">', unsafe_allow_html=True)
     st.markdown("**🏢 Subdomains Explored:**")
+
+    # Extract base domain for comparison
+    base_domain = current_domain
+    if current_domain.startswith("www."):
+        base_domain = current_domain[4:]
+
     if backend_data.get("app_subdomains"):
-        # Filter out www. subdomains
-        filtered_subdomains = [
-            sub for sub in backend_data["app_subdomains"] if not sub.startswith("www.")
+        # STRICT FILTERING: Only show subdomains that belong to this exact domain
+        domain_filtered_subdomains = [
+            sub
+            for sub in backend_data["app_subdomains"]
+            if base_domain
+            and (
+                base_domain in sub
+                or sub.endswith(f".{base_domain}")
+                or sub == base_domain
+            )
+            and not sub.startswith("www.")
         ]
-        if filtered_subdomains:
-            for subdomain in filtered_subdomains:
+
+        if domain_filtered_subdomains:
+            for subdomain in domain_filtered_subdomains:
                 st.markdown(
                     f'<div class="subdomain-item">📍 {subdomain}</div>',
                     unsafe_allow_html=True,
                 )
         else:
-            st.markdown("*No non-www subdomains discovered*")
+            st.markdown(f"*No subdomains discovered for {current_domain}*")
     else:
         st.markdown("*No subdomains discovered*")
     st.markdown("</div>", unsafe_allow_html=True)
 
 
-def render_xhr_calls_section(backend_data: Dict) -> None:
-    """Render the XHR API calls section."""
+def render_xhr_calls_section(backend_data: Dict, current_domain: str) -> None:
+    """Render the XHR API calls section with strict domain filtering."""
     st.markdown('<div class="detail-section">', unsafe_allow_html=True)
     st.markdown("**🔗 XHR API Calls:**")
+
+    # Extract base domain for comparison
+    base_domain = current_domain
+    if current_domain.startswith("www."):
+        base_domain = current_domain[4:]
+
     if backend_data.get("xhr_api_calls"):
-        for api in backend_data["xhr_api_calls"]:
-            st.markdown(
-                f'<div class="api-call-item">📡 {api}</div>', unsafe_allow_html=True
+        # STRICT FILTERING: Only show XHR calls that belong to this exact domain
+        domain_filtered_calls = [
+            api
+            for api in backend_data["xhr_api_calls"]
+            if base_domain
+            and (
+                base_domain in api
+                or api.endswith(f".{base_domain}")
+                or api == base_domain
             )
+        ]
+
+        if domain_filtered_calls:
+            for api in domain_filtered_calls:
+                st.markdown(
+                    f'<div class="api-call-item">📡 {api}</div>', unsafe_allow_html=True
+                )
+        else:
+            st.markdown(f"*No XHR API calls found for {current_domain}*")
     else:
         st.markdown("*No XHR API calls found*")
     st.markdown("</div>", unsafe_allow_html=True)
 
 
-def render_ip_analysis_section(ip_analysis: Dict) -> None:
-    """Render the IP analysis section."""
+def render_ip_analysis_section(ip_analysis: Dict, current_domain: str) -> None:
+    """Render the IP analysis section with strict domain filtering to prevent contamination."""
     st.markdown('<div class="detail-section">', unsafe_allow_html=True)
     st.markdown("**📍 IP Analysis & Cloud Matches:**")
+
+    # Extract base domain for comparison
+    base_domain = current_domain
+    if current_domain.startswith("www."):
+        base_domain = current_domain[4:]
+
     if ip_analysis.get("cloud_ip_matches"):
+        # STRICT FILTERING: Only show IP matches that belong to this exact domain
+        domain_filtered_matches = []
         for match in ip_analysis["cloud_ip_matches"]:
             api_domain = match.get("api_domain", "unknown")
-            ip = match.get("ip", "unknown")
-            provider = match.get("provider", "unknown")
-            ip_range = match.get("ip_range", "unknown")
-            st.markdown(
-                f'<div class="ip-match-item">☁️ <strong>{api_domain}</strong><br>IP: {ip} → {provider}<br>Range: {ip_range}</div>',
-                unsafe_allow_html=True,
-            )
+            # Only include matches where the API domain belongs to the current domain
+            if base_domain and (
+                base_domain in api_domain
+                or api_domain.endswith(f".{base_domain}")
+                or api_domain == base_domain
+            ):
+                domain_filtered_matches.append(match)
+
+        if domain_filtered_matches:
+            for match in domain_filtered_matches:
+                api_domain = match.get("api_domain", "unknown")
+                ip = match.get("ip", "unknown")
+                provider = match.get("provider", "unknown")
+                ip_range = match.get("ip_range", "unknown")
+                st.markdown(
+                    f'<div class="ip-match-item">☁️ <strong>{api_domain}</strong><br>IP: {ip} → {provider}<br>Range: {ip_range}</div>',
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.markdown(f"*No cloud IP matches found for {current_domain}*")
     elif ip_analysis.get("total_ips_checked", 0) > 0:
         st.markdown(
             f"*Checked {ip_analysis['total_ips_checked']} IPs - no cloud matches*"
@@ -894,23 +996,41 @@ def render_cloud_calls_section(backend_data: Dict) -> None:
 
 
 def render_headers_section(result: Dict) -> None:
-    """Render the backend headers analysis section."""
+    """Render the backend headers analysis section with strict domain isolation."""
     st.markdown('<div class="detail-section">', unsafe_allow_html=True)
     st.markdown("**🛡️ Backend Headers Analysis:**")
 
-    # ONLY use the properly isolated evidence for this specific domain
-    # Do NOT use the fallback to all_evidence as it may contain contaminated data
+    # Get the current domain for strict filtering
+    current_domain = result.get("domain", "")
+
+    # CRITICAL FIX: Only use evidence that is specifically for this domain
+    # Extract the base domain for comparison
+    base_domain = current_domain
+    if current_domain.startswith("www."):
+        base_domain = current_domain[4:]
+
     header_evidence = []
 
+    # Only use evidence from the current result, never from shared data
     if result.get("evidence"):
-        header_evidence = [
-            e for e in result["evidence"] if e.get("method") == "XHR API Headers"
-        ]
+        for evidence in result["evidence"]:
+            if evidence.get("method") == "XHR API Headers":
+                # Get endpoint from evidence
+                endpoint = evidence.get("details", {}).get("endpoint_url", "")
+
+                # STRICT FILTERING: Only include if endpoint contains the exact domain
+                if (
+                    endpoint
+                    and base_domain
+                    and (
+                        base_domain in endpoint
+                        or endpoint.endswith(f".{base_domain}")
+                        or endpoint == base_domain
+                    )
+                ):
+                    header_evidence.append(evidence)
 
     if header_evidence:
-        # Filter evidence to only show data related to the current domain
-        current_domain = result.get("domain", "")
-
         for evidence in header_evidence:
             endpoint = evidence.get("details", {}).get(
                 "endpoint_url", "Unknown endpoint"
@@ -918,21 +1038,19 @@ def render_headers_section(result: Dict) -> None:
             headers = evidence.get("details", {}).get("headers_found", [])
             provider = evidence.get("provider", "Unknown")
 
-            # Additional safety check: only show evidence if endpoint is related to current domain
-            if current_domain and current_domain in endpoint:
-                st.markdown(
-                    f'<div class="ip-match-item">🛡️ <strong>{endpoint}</strong><br>Provider: {provider}<br>Headers: {len(headers)} found</div>',
-                    unsafe_allow_html=True,
-                )
+            st.markdown(
+                f'<div class="ip-match-item">🛡️ <strong>{endpoint}</strong><br>Provider: {provider}<br>Headers: {len(headers)} found</div>',
+                unsafe_allow_html=True,
+            )
 
-                # Show individual headers in a collapsible way
-                if headers:
-                    with st.expander(
-                        f"📋 View {len(headers)} headers from {endpoint}",
-                        expanded=False,
-                    ):
-                        for header in headers:
-                            st.code(header, language="text")
+            # Show individual headers in a collapsible way
+            if headers:
+                with st.expander(
+                    f"📋 View {len(headers)} headers from {endpoint}",
+                    expanded=False,
+                ):
+                    for header in headers:
+                        st.code(header, language="text")
     else:
         st.markdown("*No backend-specific headers detected*")
     st.markdown("</div>", unsafe_allow_html=True)
