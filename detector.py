@@ -873,6 +873,38 @@ class CloudProviderDetector:
                 backend_data["app_subdomains"] = list(app_domains)
                 backend_data["cloud_provider_domains"] = list(cloud_calls)
 
+                # 6. IMPORTANT FIX: Ensure API subdomains are treated as API endpoints
+                # If we discovered API subdomains but they weren't captured as XHR calls,
+                # add them to xhr_api_calls for proper analysis
+                api_subdomains = [
+                    domain
+                    for domain in app_domains
+                    if any(
+                        prefix in domain.lower()
+                        for prefix in [
+                            "api.",
+                            "app.",
+                            "admin.",
+                            "dashboard.",
+                            "console.",
+                            "portal.",
+                        ]
+                    )
+                ]
+
+                for api_subdomain in api_subdomains:
+                    if api_subdomain not in xhr_calls:
+                        backend_data["xhr_api_calls"].append(api_subdomain)
+                        backend_data["processing_log"].append(
+                            f"  🔧 Added discovered API subdomain to XHR analysis: {api_subdomain}"
+                        )
+                        logger.info(
+                            f"  🔧 Added discovered API subdomain to XHR analysis: {api_subdomain}"
+                        )
+
+                # Remove duplicates
+                backend_data["xhr_api_calls"] = list(set(backend_data["xhr_api_calls"]))
+
                 # Resolve API IPs with more comprehensive logging
                 backend_data["processing_log"].append(
                     f"  🎯 Resolving IPs for {len(backend_data['xhr_api_calls'])} XHR APIs..."
