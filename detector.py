@@ -23,7 +23,7 @@ import os
 import asyncio
 import sys
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 import pandas as pd
 from sklearn.metrics import (
@@ -988,10 +988,16 @@ class CloudProviderDetector:
 
         return backend_data
 
-    async def analyze_xhr_headers(self, xhr_domains: List[str]) -> Dict[str, float]:
-        """Comprehensive header analysis from XHR API endpoints for backend identification."""
+    async def analyze_xhr_headers(
+        self, xhr_domains: List[str]
+    ) -> Tuple[Dict[str, float], List[Dict]]:
+        """Comprehensive header analysis from XHR API endpoints for backend identification.
+
+        Returns:
+            Tuple of (scores_dict, evidence_list) to prevent data contamination between analyses
+        """
         scores = {provider: 0.0 for provider in self.cloud_patterns.keys()}
-        header_evidence = []
+        header_evidence = []  # Local variable, not instance variable
 
         try:
             # Check headers from XHR API domains
@@ -1058,47 +1064,34 @@ class CloudProviderDetector:
                                     provider_headers.append(f"Server: {server_header}")
                                     provider_score += 45.0
 
-                        # Check powered-by headers (35 points each)
-                        if patterns.get("powered_by_headers"):
-                            powered_by = headers.get("X-Powered-By", "").lower()
-                            for powered_pattern in patterns["powered_by_headers"]:
-                                if powered_pattern.lower() in powered_by:
-                                    provider_headers.append(f"Powered-By: {powered_by}")
-                                    provider_score += 35.0
-
-                        # Check additional backend indicators
+                        # Check for additional backend indicators
                         provider_score = self._check_additional_backend_indicators(
                             headers, provider, provider_headers, provider_score
                         )
 
-                        if provider_headers:
+                        if provider_score > 0:
                             scores[provider] += provider_score
-                            found_evidence[provider] = {
-                                "provider": provider,  # Add missing provider key
-                                "endpoint": api_domain,
-                                "headers": provider_headers,
-                                "score": provider_score,
-                            }
-                            logger.info(
-                                f"  🛡️ Found {provider} backend headers in {api_domain}:"
-                            )
-                            for header in provider_headers:
-                                logger.info(f"    • {header}")
+                            found_evidence[provider] = provider_headers
 
-                    # Store evidence for all providers found
-                    for provider, evidence in found_evidence.items():
-                        header_evidence.append(evidence)
+                    # Store evidence for this specific endpoint
+                    for provider, headers_found in found_evidence.items():
+                        header_evidence.append(
+                            {
+                                "provider": provider,
+                                "endpoint": api_domain,
+                                "headers": headers_found,
+                            }
+                        )
 
                 except Exception as e:
-                    logger.error(f"  ❌ Header check failed for {api_domain}: {e}")
+                    logger.error(f"Failed to analyze headers for {api_domain}: {e}")
                     continue
 
         except Exception as e:
             logger.error(f"XHR header analysis failed: {e}")
 
-        # Store header evidence for later use in reason generation
-        self._header_evidence = header_evidence
-        return scores
+        # Return both scores and evidence - NO instance variable storage
+        return scores, header_evidence
 
     def _check_additional_backend_indicators(
         self,
@@ -1312,32 +1305,31 @@ class CloudProviderDetector:
                 logger.info(
                     f"  🛡️ Analyzing headers from {len(backend_data['xhr_api_calls'])} XHR API endpoints..."
                 )
-                header_scores = await self.analyze_xhr_headers(
+                header_scores, header_evidence = await self.analyze_xhr_headers(
                     backend_data["xhr_api_calls"]
                 )
 
-                # Add detailed header evidence
-                if hasattr(self, "_header_evidence"):
-                    for header_info in self._header_evidence:
-                        provider = header_info["provider"]
-                        endpoint = header_info["endpoint"]
-                        headers = header_info["headers"]
+                # Add detailed header evidence - using fresh evidence from current analysis only
+                for header_info in header_evidence:
+                    provider = header_info["provider"]
+                    endpoint = header_info["endpoint"]
+                    headers = header_info["headers"]
 
-                        # Create detailed evidence with endpoint and header information
-                        header_details = f"Found {provider}-specific headers at XHR endpoint {endpoint}: {', '.join(headers)}"
+                    # Create detailed evidence with endpoint and header information
+                    header_details = f"Found {provider}-specific headers at XHR endpoint {endpoint}: {', '.join(headers)}"
 
-                        evidence_list.append(
-                            {
-                                "method": "XHR API Headers",
+                    evidence_list.append(
+                        {
+                            "method": "XHR API Headers",
+                            "provider": provider,
+                            "evidence": header_details,
+                            "details": {
+                                "endpoint_url": endpoint,
+                                "headers_found": headers,
                                 "provider": provider,
-                                "evidence": header_details,
-                                "details": {
-                                    "endpoint_url": endpoint,
-                                    "headers_found": headers,
-                                    "provider": provider,
-                                },
-                            }
-                        )
+                            },
+                        }
+                    )
 
                 # Fallback for any providers with header scores but no detailed evidence
                 for provider, score in header_scores.items():
