@@ -873,10 +873,44 @@ class CloudProviderDetector:
                 backend_data["app_subdomains"] = list(app_domains)
                 backend_data["cloud_provider_domains"] = list(cloud_calls)
 
-                # 6. IMPORTANT FIX: Ensure API subdomains are treated as API endpoints
-                # If we discovered API subdomains but they weren't captured as XHR calls,
-                # add them to xhr_api_calls for proper analysis
-                api_subdomains = [
+                # 6. IMPORTANT FIX: Proactively test common API endpoints
+                # Always test common API subdomains even if not discovered during navigation
+                common_api_endpoints = [
+                    f"api.{base_domain}",
+                    f"app.{base_domain}",
+                    f"admin.{base_domain}",
+                    f"dashboard.{base_domain}",
+                    f"console.{base_domain}",
+                    f"portal.{base_domain}",
+                    f"manage.{base_domain}",
+                    f"backend.{base_domain}",
+                    f"service.{base_domain}",
+                    f"services.{base_domain}",
+                ]
+
+                backend_data["processing_log"].append(
+                    f"  🎯 Proactively testing {len(common_api_endpoints)} common API endpoints..."
+                )
+                logger.info(
+                    f"  🎯 Proactively testing {len(common_api_endpoints)} common API endpoints..."
+                )
+
+                # Add common API endpoints to XHR analysis if not already present
+                for api_endpoint in common_api_endpoints:
+                    if (
+                        api_endpoint not in xhr_calls
+                        and api_endpoint not in backend_data["xhr_api_calls"]
+                    ):
+                        backend_data["xhr_api_calls"].append(api_endpoint)
+                        backend_data["processing_log"].append(
+                            f"  🔧 Added common API endpoint to analysis: {api_endpoint}"
+                        )
+                        logger.info(
+                            f"  🔧 Added common API endpoint to analysis: {api_endpoint}"
+                        )
+
+                # Also add any discovered API subdomains that weren't captured as XHR calls
+                discovered_api_subdomains = [
                     domain
                     for domain in app_domains
                     if any(
@@ -892,14 +926,17 @@ class CloudProviderDetector:
                     )
                 ]
 
-                for api_subdomain in api_subdomains:
-                    if api_subdomain not in xhr_calls:
+                for api_subdomain in discovered_api_subdomains:
+                    if (
+                        api_subdomain not in xhr_calls
+                        and api_subdomain not in backend_data["xhr_api_calls"]
+                    ):
                         backend_data["xhr_api_calls"].append(api_subdomain)
                         backend_data["processing_log"].append(
-                            f"  🔧 Added discovered API subdomain to XHR analysis: {api_subdomain}"
+                            f"  🔧 Added discovered API subdomain to analysis: {api_subdomain}"
                         )
                         logger.info(
-                            f"  🔧 Added discovered API subdomain to XHR analysis: {api_subdomain}"
+                            f"  🔧 Added discovered API subdomain to analysis: {api_subdomain}"
                         )
 
                 # Remove duplicates
