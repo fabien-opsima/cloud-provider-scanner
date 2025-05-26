@@ -241,12 +241,11 @@ def create_deep_copy_result_data(result: Dict) -> Tuple[Dict, Dict, List]:
             "cloud_matches": original_ip.get("cloud_matches", 0),
         }
 
-    # Deep copy evidence data to prevent sharing
+    # Deep copy evidence data to prevent sharing - ONLY use isolated evidence
     evidence_data = []
     if result.get("evidence"):
         evidence_data = copy.deepcopy(result["evidence"])
-    elif result.get("details", {}).get("all_evidence"):
-        evidence_data = copy.deepcopy(result["details"]["all_evidence"])
+    # Do NOT use all_evidence fallback as it may contain contaminated data from previous analyses
 
     return backend_data, ip_analysis, evidence_data
 
@@ -899,22 +898,19 @@ def render_headers_section(result: Dict) -> None:
     st.markdown('<div class="detail-section">', unsafe_allow_html=True)
     st.markdown("**🛡️ Backend Headers Analysis:**")
 
-    # Check if we have header evidence in the stored result data
+    # ONLY use the properly isolated evidence for this specific domain
+    # Do NOT use the fallback to all_evidence as it may contain contaminated data
     header_evidence = []
 
-    # Try to get evidence from the stored result data structure
     if result.get("evidence"):
         header_evidence = [
             e for e in result["evidence"] if e.get("method") == "XHR API Headers"
         ]
-    elif result.get("details", {}).get("all_evidence"):
-        # Fallback to all evidence if direct evidence not available
-        all_evidence = result["details"]["all_evidence"]
-        header_evidence = [
-            e for e in all_evidence if e.get("method") == "XHR API Headers"
-        ]
 
     if header_evidence:
+        # Filter evidence to only show data related to the current domain
+        current_domain = result.get("domain", "")
+
         for evidence in header_evidence:
             endpoint = evidence.get("details", {}).get(
                 "endpoint_url", "Unknown endpoint"
@@ -922,19 +918,21 @@ def render_headers_section(result: Dict) -> None:
             headers = evidence.get("details", {}).get("headers_found", [])
             provider = evidence.get("provider", "Unknown")
 
-            st.markdown(
-                f'<div class="ip-match-item">🛡️ <strong>{endpoint}</strong><br>Provider: {provider}<br>Headers: {len(headers)} found</div>',
-                unsafe_allow_html=True,
-            )
+            # Additional safety check: only show evidence if endpoint is related to current domain
+            if current_domain and current_domain in endpoint:
+                st.markdown(
+                    f'<div class="ip-match-item">🛡️ <strong>{endpoint}</strong><br>Provider: {provider}<br>Headers: {len(headers)} found</div>',
+                    unsafe_allow_html=True,
+                )
 
-            # Show individual headers in a collapsible way
-            if headers:
-                with st.expander(
-                    f"📋 View {len(headers)} headers from {endpoint}",
-                    expanded=False,
-                ):
-                    for header in headers:
-                        st.code(header, language="text")
+                # Show individual headers in a collapsible way
+                if headers:
+                    with st.expander(
+                        f"📋 View {len(headers)} headers from {endpoint}",
+                        expanded=False,
+                    ):
+                        for header in headers:
+                            st.code(header, language="text")
     else:
         st.markdown("*No backend-specific headers detected*")
     st.markdown("</div>", unsafe_allow_html=True)
