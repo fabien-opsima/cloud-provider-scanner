@@ -804,7 +804,7 @@ def display_result_card(result: Dict) -> None:
         st.markdown(f"**💡 Primary Reason:** {result['primary_reason']}")
 
         # Create expandable sections for details
-        with st.expander("📊 Detailed Analysis", expanded=False):
+        with st.expander("📊 Detailed Analysis", expanded=True):
             col1, col2 = st.columns([1, 1])
 
             with col1:
@@ -938,7 +938,7 @@ def display_result_card(result: Dict) -> None:
                         if headers:
                             with st.expander(
                                 f"View {len(headers)} headers from {endpoint}",
-                                expanded=False,
+                                expanded=True,
                             ):
                                 for header in headers:
                                     st.code(header, language="text")
