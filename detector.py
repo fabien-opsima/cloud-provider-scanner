@@ -134,9 +134,15 @@ class CloudProviderDetector:
     the actual backend hosting provider (not CDN/delivery layer).
     """
 
-    def __init__(self, headless: bool = True):
-        """Initialize the detector."""
+    def __init__(self, headless: bool = True, time_limit: int = None):
+        """Initialize the detector.
+        
+        Args:
+            headless: Whether to run browser in headless mode
+            time_limit: Maximum time in seconds for exploration phase (None for unlimited)
+        """
         self.headless = headless
+        self.time_limit = time_limit  # Time limit for exploration in seconds
         self.session = requests.Session()
         self.session.headers.update(
             {
@@ -477,7 +483,10 @@ class CloudProviderDetector:
         return None
 
     async def discover_app_subdomains_and_apis(self, url: str) -> Dict[str, List[str]]:
-        """Discover app subdomains and their API endpoints through comprehensive deep exploration."""
+        """Discover app subdomains and their API endpoints through time-limited exploration."""
+        import time
+        start_time = time.time()
+        
         backend_data = {
             "xhr_api_calls": [],
             "app_subdomains": [],
@@ -486,6 +495,8 @@ class CloudProviderDetector:
             "cloud_domain_ips": [],
             "subdomain_details": {},  # Track which subdomain found which APIs
             "processing_log": [],  # For real-time display
+            "time_limited": self.time_limit is not None,
+            "exploration_time": 0,
         }
 
         # Check if browsers are available
@@ -664,8 +675,19 @@ class CloudProviderDetector:
                 # 1. Start with the main page - spend more time here
                 backend_data["processing_log"].append(f"  📄 Loading main page: {url}")
                 logger.info(f"  📄 Loading main page: {url}")
+                
+                # Check time limit before main page
+                if self.time_limit and (time.time() - start_time) > self.time_limit:
+                    backend_data["processing_log"].append(f"  ⏰ Time limit reached, stopping exploration")
+                    logger.info(f"  ⏰ Time limit reached, stopping exploration")
+                    return backend_data
+                
                 await page.goto(url, wait_until="networkidle", timeout=20000)
-                await page.wait_for_timeout(5000)  # Wait longer for initial API calls
+                
+                # Adjust wait time based on time limit
+                main_page_wait = 5000 if not self.time_limit else min(3000, (self.time_limit - (time.time() - start_time)) * 1000 / 2)
+                if main_page_wait > 0:
+                    await page.wait_for_timeout(int(main_page_wait))
 
                 # Try to trigger more interactions on main page
                 try:
@@ -777,25 +799,33 @@ class CloudProviderDetector:
                     f"  📋 Found {len(app_links)} potential app links, testing {len(all_app_urls)} total URLs"
                 )
 
-                # 3. Navigate to each app subdomain/page and collect API calls - spend more time on each
+                # 3. Navigate to each app subdomain/page and collect API calls - time-limited exploration
                 successful_subdomains = []
-                for i, app_url in enumerate(
-                    all_app_urls[:10]
-                ):  # Increase limit to 10 for more thorough analysis
+                max_subdomains = 10 if not self.time_limit else min(10, max(3, int((self.time_limit - (time.time() - start_time)) / 3)))
+                
+                for i, app_url in enumerate(all_app_urls[:max_subdomains]):
+                    # Check time limit before each subdomain
+                    if self.time_limit and (time.time() - start_time) > self.time_limit:
+                        backend_data["processing_log"].append(f"  ⏰ Time limit reached, stopping subdomain exploration")
+                        logger.info(f"  ⏰ Time limit reached, stopping subdomain exploration")
+                        break
+                    
                     try:
                         backend_data["processing_log"].append(
-                            f"  🚀 [{i + 1}/{min(10, len(all_app_urls))}] Exploring: {app_url}"
+                            f"  🚀 [{i + 1}/{max_subdomains}] Exploring: {app_url}"
                         )
                         logger.info(
-                            f"  🚀 [{i + 1}/{min(10, len(all_app_urls))}] Exploring: {app_url}"
+                            f"  🚀 [{i + 1}/{max_subdomains}] Exploring: {app_url}"
                         )
 
                         await page.goto(
                             app_url, wait_until="networkidle", timeout=15000
                         )
 
-                        # Wait longer for SPAs to load and make API calls
-                        await page.wait_for_timeout(7000)  # Increased wait time
+                        # Adjust wait time based on time limit
+                        subdomain_wait = 7000 if not self.time_limit else min(4000, (self.time_limit - (time.time() - start_time)) * 1000 / (max_subdomains - i))
+                        if subdomain_wait > 0:
+                            await page.wait_for_timeout(int(subdomain_wait))
 
                         # More comprehensive interaction to trigger API calls
                         try:
@@ -839,9 +869,10 @@ class CloudProviderDetector:
                                     }
                                 }
                             }""")
-                            await page.wait_for_timeout(
-                                4000
-                            )  # Wait for triggered API calls
+                            # Adjust final wait time based on time limit
+                            final_wait = 4000 if not self.time_limit else min(2000, (self.time_limit - (time.time() - start_time)) * 1000 / 4)
+                            if final_wait > 0:
+                                await page.wait_for_timeout(int(final_wait))
                         except:
                             pass
 
@@ -967,11 +998,18 @@ class CloudProviderDetector:
                     ips = self.resolve_domain_to_ips(domain)
                     backend_data["cloud_domain_ips"].extend(ips)
 
+                # Record exploration time
+                backend_data["exploration_time"] = time.time() - start_time
+                
+                time_info = f" in {backend_data['exploration_time']:.1f}s"
+                if self.time_limit:
+                    time_info += f" (limit: {self.time_limit}s)"
+                
                 backend_data["processing_log"].append(
-                    f"  ✅ Discovery complete: {len(backend_data['xhr_api_calls'])} XHR APIs, {len(backend_data['cloud_provider_domains'])} cloud calls from {len(successful_subdomains)} subdomains"
+                    f"  ✅ Discovery complete{time_info}: {len(backend_data['xhr_api_calls'])} XHR APIs, {len(backend_data['cloud_provider_domains'])} cloud calls from {len(successful_subdomains)} subdomains"
                 )
                 logger.info(
-                    f"  ✅ Discovery complete: {len(backend_data['xhr_api_calls'])} XHR APIs, {len(backend_data['cloud_provider_domains'])} cloud calls from {len(successful_subdomains)} subdomains"
+                    f"  ✅ Discovery complete{time_info}: {len(backend_data['xhr_api_calls'])} XHR APIs, {len(backend_data['cloud_provider_domains'])} cloud calls from {len(successful_subdomains)} subdomains"
                 )
 
         except Exception as e:

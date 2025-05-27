@@ -194,7 +194,7 @@ def format_detected_providers(
 def get_status_info(predicted_label: str, is_correct: bool) -> Tuple[str, str, str]:
     """Get status emoji, CSS class, and text for a result."""
     if predicted_label == "Insufficient Data":
-        return "🔍", "info", "INSUFFICIENT DATA"
+        return "🔍", "insufficient", "INSUFFICIENT DATA"
     elif is_correct:
         return "✅", "success", "CORRECT"
     else:
@@ -327,6 +327,7 @@ def render_csv_batch_tab() -> None:
     """Render the CSV batch processing tab."""
     st.markdown("### 📊 CSV Batch Processing")
     st.markdown("Upload a CSV file with domains to analyze multiple sites at once.")
+    st.info("⏰ **Time-Limited Mode**: Each domain is analyzed for up to 20 seconds to ensure reasonable processing times.")
     
     # File upload
     uploaded_file = st.file_uploader(
@@ -953,6 +954,16 @@ def display_result_card(result: Dict) -> None:
             st.error(
                 f"{status_emoji} **{domain}** → {detected_display} ({status_text})"
             )
+        elif status_type == "insufficient":
+            # Use a custom gray container for insufficient data
+            st.markdown(
+                f"""
+                <div style="padding: 0.75rem; border-radius: 0.5rem; border: 1px solid #d1d5db; background-color: #f9fafb; color: #6b7280;">
+                    <strong>{status_emoji} {domain}</strong> → {detected_display} ({status_text})
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
         else:
             st.info(f"{status_emoji} **{domain}** → {detected_display} ({status_text})")
 
@@ -1145,7 +1156,7 @@ def run_single_domain_analysis(domain: str, headless: bool) -> None:
         status_text.text("🔍 Initializing detector...")
         progress_bar.progress(10)
         
-        # Initialize detector
+        # Initialize detector (no time limit for single domain analysis)
         detector = CloudProviderDetector(headless=headless)
         
         status_text.text(f"🌐 Analyzing {domain}...")
@@ -1215,8 +1226,8 @@ def run_csv_batch_analysis(df: pd.DataFrame, headless: bool, max_concurrent: int
     status_text = st.empty()
     results_container = st.container()
     
-    # Initialize detector
-    detector = CloudProviderDetector(headless=headless)
+    # Initialize detector with time limit for batch mode (20 seconds per domain)
+    detector = CloudProviderDetector(headless=headless, time_limit=20)
     
     processed = 0
     batch_results = []
@@ -1236,7 +1247,7 @@ def run_csv_batch_analysis(df: pd.DataFrame, headless: bool, max_concurrent: int
             status_text.text(f"🔍 Analyzing {domain} ({processed + 1}/{total_domains})")
             
             try:
-                # Run analysis
+                # Run analysis with time-limited exploration (20 seconds per domain)
                 url = f"https://{domain}"
                 result = asyncio.run(detector.analyze_website(url))
                 
@@ -1275,18 +1286,24 @@ def run_csv_batch_analysis(df: pd.DataFrame, headless: bool, max_concurrent: int
                     st.success(f"✅ {domain} → {predicted_label}")
                 
             except Exception as e:
+                # Handle errors as insufficient data rather than hard errors
                 error_result = {
                     'domain': domain,
                     'url': f"https://{domain}",
-                    'predicted_label': 'Error',
-                    'error': str(e),
+                    'predicted_label': 'Insufficient Data',
+                    'confidence': 0,
+                    'primary_reason': f'Analysis failed: {str(e)}',
+                    'all_detected_providers': [],
+                    'backend_data': {},
+                    'ip_analysis': {},
+                    'evidence': [],
                     'analysis_type': 'batch',
                     'original_data': row.to_dict()
                 }
                 add_result_to_storage(BATCH_RESULTS_FILE, error_result)
                 
                 with results_container:
-                    st.error(f"❌ {domain} → Error: {str(e)}")
+                    st.info(f"🔍 {domain} → Insufficient Data (analysis failed)")
             
             processed += 1
             progress_bar.progress(processed / total_domains)
@@ -1343,12 +1360,12 @@ def display_batch_results() -> None:
         with st.expander(f"📊 Batch from {date_key} ({len(batch_results)} domains)", expanded=True):
             # Create summary
             providers = {}
-            errors = 0
+            insufficient_data = 0
             for result in batch_results:
-                if result.get('predicted_label') == 'Error':
-                    errors += 1
+                provider = result.get('predicted_label', 'Unknown')
+                if provider == 'Insufficient Data':
+                    insufficient_data += 1
                 else:
-                    provider = result.get('predicted_label', 'Unknown')
                     providers[provider] = providers.get(provider, 0) + 1
             
             # Show summary
@@ -1360,12 +1377,19 @@ def display_batch_results() -> None:
             with col2:
                 st.markdown("**Batch Stats:**")
                 st.markdown(f"• Total: {len(batch_results)}")
-                st.markdown(f"• Successful: {len(batch_results) - errors}")
-                st.markdown(f"• Errors: {errors}")
+                st.markdown(f"• Successful: {len(batch_results) - insufficient_data}")
+                st.markdown(f"• Insufficient Data: {insufficient_data}")
             
             # Download results as CSV
             if st.button(f"📥 Download Results CSV", key=f"download_{date_key}"):
                 download_batch_results(batch_results, date_key)
+            
+            st.markdown("---")
+            
+            # Individual result cards with expandable details
+            st.markdown("**Individual Results:**")
+            for i, result in enumerate(batch_results):
+                display_batch_result_card(result, f"{date_key}_{i}")
 
 
 def display_single_result_card(result: Dict) -> None:
@@ -1394,7 +1418,15 @@ def display_single_result_card(result: Dict) -> None:
             if 'error' in result:
                 st.markdown(f"**Error:** {result['error']}")
         elif predicted == 'Insufficient Data':
-            st.info(f"🔍 **{domain}** → Insufficient Data")
+            # Use gray styling for insufficient data
+            st.markdown(
+                f"""
+                <div style="padding: 0.75rem; border-radius: 0.5rem; border: 1px solid #d1d5db; background-color: #f9fafb; color: #6b7280;">
+                    <strong>🔍 {domain}</strong> → Insufficient Data
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
         else:
             provider_display = " + ".join(providers) if len(providers) > 1 else predicted
             st.success(f"✅ **{domain}** → {provider_display}")
@@ -1512,5 +1544,123 @@ def download_batch_results(results: List[Dict], date_key: str) -> None:
     )
 
 
+def display_batch_result_card(result: Dict, unique_key: str) -> None:
+    """Display a single batch result card with expandable details."""
+    domain = result.get('domain', 'Unknown')
+    predicted = result.get('predicted_label', 'Unknown')
+    providers = result.get('all_detected_providers', [])
+    confidence = result.get('confidence', 0)
+    reason = result.get('primary_reason', 'Unknown')
+    
+    with st.container():
+        # Compact header for batch mode
+        col1, col2, col3 = st.columns([2, 1, 1])
+        
+        with col1:
+            if predicted == 'Insufficient Data':
+                # Use gray styling for insufficient data
+                st.markdown(
+                    f"""
+                    <div style="padding: 0.5rem; border-radius: 0.25rem; border: 1px solid #d1d5db; background-color: #f9fafb; color: #6b7280; margin-bottom: 0.5rem;">
+                        <strong>🔍 {domain}</strong> → Insufficient Data
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+            else:
+                provider_display = " + ".join(providers) if len(providers) > 1 else predicted
+                st.success(f"✅ **{domain}** → {provider_display}")
+        
+        with col2:
+            st.markdown(f"**{confidence}%** confidence")
+        
+        with col3:
+            if len(providers) > 1:
+                st.markdown(f"**{len(providers)}** providers")
+        
+        # Expandable details - collapsed by default for batch mode
+        if predicted != 'Insufficient Data':
+            with st.expander(f"📊 Details for {domain}", expanded=False, key=f"batch_details_{unique_key}"):
+                # Primary reason
+                st.markdown(f"**💡 Primary Reason:** {reason}")
+                
+                # Show all detected providers if multiple
+                if len(providers) > 1:
+                    st.markdown(f"**🔍 All Detected Providers:** {', '.join(providers)}")
+                
+                backend_data = result.get('backend_data', {})
+                ip_analysis = result.get('ip_analysis', {})
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown("**🏢 Subdomains Found:**")
+                    subdomains = backend_data.get('app_subdomains', [])
+                    if subdomains:
+                        for sub in subdomains[:5]:  # Limit to first 5 for batch mode
+                            st.markdown(f"• {sub}")
+                        if len(subdomains) > 5:
+                            st.markdown(f"*... and {len(subdomains) - 5} more*")
+                    else:
+                        st.markdown("*None found*")
+                    
+                    st.markdown("**🔗 API Endpoints Found:**")
+                    if ip_analysis.get('cloud_ip_matches'):
+                        # Get API endpoints that actually have IP matches
+                        base_domain = domain.replace('www.', '') if domain.startswith('www.') else domain
+                        found_api_endpoints = list(set([
+                            match.get("api_domain", "")
+                            for match in ip_analysis["cloud_ip_matches"]
+                            if base_domain in match.get("api_domain", "")
+                        ]))
+                        
+                        if found_api_endpoints:
+                            for api in found_api_endpoints[:3]:  # Limit to first 3 for batch mode
+                                st.markdown(f"• {api}")
+                            if len(found_api_endpoints) > 3:
+                                st.markdown(f"*... and {len(found_api_endpoints) - 3} more*")
+                        else:
+                            st.markdown("*None found*")
+                    else:
+                        st.markdown("*None found*")
+                
+                with col2:
+                    st.markdown("**☁️ Cloud IP Matches:**")
+                    matches = ip_analysis.get('cloud_ip_matches', [])
+                    if matches:
+                        for match in matches[:3]:  # Limit to first 3 for batch mode
+                            api_domain = match.get('api_domain', 'Unknown')
+                            ip = match.get('ip', 'Unknown')
+                            provider = match.get('provider', 'Unknown')
+                            st.markdown(f"• **{api_domain}** → {provider}")
+                            st.markdown(f"  IP: {ip}")
+                        if len(matches) > 3:
+                            st.markdown(f"*... and {len(matches) - 3} more matches*")
+                    else:
+                        st.markdown("*None found*")
+                    
+                    st.markdown("**☁️ Direct Cloud Calls:**")
+                    cloud_calls = backend_data.get('cloud_provider_domains', [])
+                    if cloud_calls:
+                        for call in cloud_calls[:3]:  # Limit to first 3 for batch mode
+                            if isinstance(call, tuple) and len(call) >= 2:
+                                domain_call, provider_name = call[0], call[1]
+                                service_type = call[2] if len(call) > 2 else ""
+                                service_text = f" ({service_type})" if service_type else ""
+                                st.markdown(f"• {domain_call} → {provider_name}{service_text}")
+                            else:
+                                st.markdown(f"• {call}")
+                        if len(cloud_calls) > 3:
+                            st.markdown(f"*... and {len(cloud_calls) - 3} more calls*")
+                    else:
+                        st.markdown("*None found*")
+        else:
+            # Show minimal details for insufficient data cases
+            with st.expander(f"📊 Details for {domain}", expanded=False, key=f"batch_details_{unique_key}"):
+                st.markdown(f"**💡 Reason:** {reason}")
+        
+        st.markdown("---")
+
+
 if __name__ == "__main__":
     main()
+        
