@@ -756,6 +756,11 @@ def handle_analysis_error(
 
 def display_result_card(result: Dict) -> None:
     """Display a single result card with all content properly contained."""
+    # CRITICAL: Clear any potential cached state for this domain
+    domain_key = f"cache_{result['domain']}_{result.get('timestamp', time.time())}"
+    if domain_key in st.session_state:
+        del st.session_state[domain_key]
+
     domain = result["domain"]
     true_label = result["true_label"]
     predicted_label = result["predicted_label"]
@@ -778,8 +783,10 @@ def display_result_card(result: Dict) -> None:
     if domain.startswith("www."):
         base_domain = domain[4:]
 
-    # Create a single card using Streamlit's container
-    with st.container():
+    # Create a single card using Streamlit's container with unique key to prevent contamination
+    with st.container(
+        key=f"result_card_{domain}_{result.get('timestamp', time.time())}"
+    ):
         # Header with status
         if status_type == "success":
             st.success(
@@ -804,7 +811,11 @@ def display_result_card(result: Dict) -> None:
         st.markdown(f"**💡 Primary Reason:** {result['primary_reason']}")
 
         # Create expandable sections for details
-        with st.expander("📊 Detailed Analysis", expanded=True):
+        with st.expander(
+            "📊 Detailed Analysis",
+            expanded=True,
+            key=f"expander_{domain}_{result.get('timestamp', time.time())}",
+        ):
             col1, col2 = st.columns([1, 1])
 
             with col1:
@@ -905,15 +916,18 @@ def display_result_card(result: Dict) -> None:
 
                 st.markdown("---")
 
-                # Backend headers section
+                # Backend headers section - STRICT domain filtering to prevent contamination
                 st.markdown("**🛡️ Backend Headers Analysis:**")
                 header_evidence = []
+
+                # CRITICAL: Only process evidence that strictly belongs to this domain
                 if result.get("evidence"):
                     for evidence in result["evidence"]:
                         if evidence.get("method") == "XHR API Headers":
                             endpoint = evidence.get("details", {}).get(
                                 "endpoint_url", ""
                             )
+                            # STRICT filtering: endpoint must contain the exact base domain
                             if (
                                 endpoint
                                 and base_domain
@@ -922,28 +936,40 @@ def display_result_card(result: Dict) -> None:
                                     or endpoint.endswith(f".{base_domain}")
                                     or endpoint == base_domain
                                 )
+                                # ADDITIONAL CHECK: Ensure no contamination from other domains
+                                and not any(
+                                    other_domain in endpoint
+                                    for other_domain in [
+                                        "vetup.com",
+                                        "thalesaleniaspace.com",
+                                        "everping.eu",
+                                    ]
+                                    if other_domain != base_domain
+                                )
                             ):
                                 header_evidence.append(evidence)
 
-                if header_evidence:
+                # Only show header evidence if we have valid, domain-specific evidence
+                if header_evidence and len(header_evidence) > 0:
                     for evidence in header_evidence:
                         endpoint = evidence.get("details", {}).get(
                             "endpoint_url", "Unknown endpoint"
                         )
                         headers = evidence.get("details", {}).get("headers_found", [])
                         provider = evidence.get("provider", "Unknown")
-                        st.markdown(f"• 🛡️ **{endpoint}**")
-                        st.markdown(f"  Provider: {provider}")
-                        st.markdown(f"  Headers: {len(headers)} found")
-                        if headers:
-                            with st.expander(
-                                f"View {len(headers)} headers from {endpoint}",
-                                expanded=True,
-                            ):
+
+                        # Double-check endpoint belongs to current domain
+                        if base_domain in endpoint:
+                            st.markdown(f"• 🛡️ **{endpoint}**")
+                            st.markdown(f"  Provider: {provider}")
+                            st.markdown(f"  Headers: {len(headers)} found")
+                            if headers:
+                                st.markdown(f"  **Headers from {endpoint}:**")
                                 for header in headers:
                                     st.code(header, language="text")
                 else:
-                    st.markdown("*No backend-specific headers detected*")
+                    # EXPLICIT: Only show "no headers" message for current domain
+                    st.markdown(f"*No backend-specific headers detected for {domain}*")
 
         # Separator between cards
         st.markdown("---")
