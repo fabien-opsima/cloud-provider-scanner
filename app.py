@@ -10,6 +10,8 @@ Features:
 - Always-visible history with full details
 - Partial matching for multiple cloud providers
 - Enhanced backend header analysis
+- Single domain crawling
+- CSV batch processing with persistent storage
 """
 
 import streamlit as st
@@ -17,7 +19,11 @@ import pandas as pd
 import asyncio
 import time
 import copy
+import json
+import os
+from datetime import datetime
 from typing import Dict, List, Optional, Tuple
+import uuid
 
 # Import our updated detector
 from detector import CloudProviderDetector
@@ -29,10 +35,18 @@ MAX_ACTIVITY_LINES = 15
 MAX_PREVIEW_ITEMS = 3
 MAX_PREVIEW_MATCHES = 2
 
+# Storage paths
+RESULTS_DIR = "results"
+SINGLE_RESULTS_FILE = os.path.join(RESULTS_DIR, "single_domain_results.json")
+BATCH_RESULTS_FILE = os.path.join(RESULTS_DIR, "batch_results.json")
+
+# Ensure results directory exists
+os.makedirs(RESULTS_DIR, exist_ok=True)
+
 # Page configuration
 st.set_page_config(
-    page_title="Cloud Provider Scanner - Test Mode",
-    page_icon="🧪",
+    page_title="Cloud Provider Scanner",
+    page_icon="🔍",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -125,6 +139,22 @@ st.markdown(
         overflow-y: auto;
         padding-right: 10px;
     }
+    .result-card {
+        background: white;
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        padding: 1rem;
+        margin: 0.5rem 0;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 2px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        height: 50px;
+        padding-left: 20px;
+        padding-right: 20px;
+    }
 </style>
 """,
     unsafe_allow_html=True,
@@ -201,19 +231,141 @@ def create_deep_copy_result_data(result: Dict) -> Tuple[Dict, Dict, List]:
     return backend_data, ip_analysis, evidence_data
 
 
+# Storage utility functions
+def load_results(file_path: str) -> List[Dict]:
+    """Load results from JSON file."""
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, 'r') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError):
+            return []
+    return []
+
+
+def save_results(file_path: str, results: List[Dict]) -> None:
+    """Save results to JSON file."""
+    try:
+        with open(file_path, 'w') as f:
+            json.dump(results, f, indent=2, default=str)
+    except IOError as e:
+        st.error(f"Failed to save results: {e}")
+
+
+def add_result_to_storage(file_path: str, result: Dict) -> None:
+    """Add a single result to storage."""
+    results = load_results(file_path)
+    result['timestamp'] = datetime.now().isoformat()
+    result['id'] = str(uuid.uuid4())
+    results.append(result)
+    save_results(file_path, results)
+
+
 def main() -> None:
     """Main application function."""
     # Header
     st.markdown(
         """
     <div class="main-header">
-        <h1>🧪 Cloud Provider Detection Test</h1>
-        <p>Live accuracy testing with complete crawling details</p>
+        <h1>🔍 Cloud Provider Scanner</h1>
+        <p>Detect cloud providers with live crawling, batch processing, and accuracy testing</p>
     </div>
     """,
         unsafe_allow_html=True,
     )
 
+    # Create tabs for different modes
+    tab1, tab2, tab3 = st.tabs(["🔍 Single Domain", "📊 CSV Batch Processing", "🧪 Accuracy Testing"])
+    
+    with tab1:
+        render_single_domain_tab()
+    
+    with tab2:
+        render_csv_batch_tab()
+    
+    with tab3:
+        render_accuracy_test_tab()
+
+
+def render_single_domain_tab() -> None:
+    """Render the single domain analysis tab."""
+    st.markdown("### 🔍 Single Domain Analysis")
+    st.markdown("Enter a domain to analyze its cloud provider hosting in real-time.")
+    
+    # Input section
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        domain_input = st.text_input(
+            "Domain to analyze",
+            placeholder="example.com",
+            help="Enter a domain without http:// or https://"
+        )
+    
+    with col2:
+        st.markdown("<br>", unsafe_allow_html=True)  # Add spacing
+        headless_mode = st.checkbox("Headless browser", value=True, key="single_headless")
+    
+    # Analysis button
+    if st.button("🚀 Analyze Domain", type="primary", use_container_width=True):
+        if domain_input.strip():
+            run_single_domain_analysis(domain_input.strip(), headless_mode)
+        else:
+            st.error("Please enter a domain to analyze")
+    
+    # Display stored results
+    st.markdown("### 📋 Recent Results")
+    display_single_domain_results()
+
+
+def render_csv_batch_tab() -> None:
+    """Render the CSV batch processing tab."""
+    st.markdown("### 📊 CSV Batch Processing")
+    st.markdown("Upload a CSV file with domains to analyze multiple sites at once.")
+    
+    # File upload
+    uploaded_file = st.file_uploader(
+        "Choose a CSV file",
+        type="csv",
+        help="CSV should have a 'domain' column. Other columns will be preserved in results."
+    )
+    
+    if uploaded_file is not None:
+        try:
+            # Read and preview CSV
+            df = pd.read_csv(uploaded_file)
+            
+            if 'domain' not in df.columns:
+                st.error("❌ CSV file must contain a 'domain' column")
+                return
+            
+            st.success(f"✅ CSV loaded successfully with {len(df)} domains")
+            
+            # Preview
+            st.markdown("#### Preview:")
+            st.dataframe(df.head(), use_container_width=True)
+            
+            # Processing options
+            col1, col2 = st.columns(2)
+            with col1:
+                headless_mode = st.checkbox("Headless browser", value=True, key="batch_headless")
+            with col2:
+                max_concurrent = st.slider("Max concurrent analyses", 1, 5, 2)
+            
+            # Start processing
+            if st.button("🚀 Start Batch Analysis", type="primary", use_container_width=True):
+                run_csv_batch_analysis(df, headless_mode, max_concurrent)
+                
+        except Exception as e:
+            st.error(f"❌ Error reading CSV file: {str(e)}")
+    
+    # Display batch results
+    st.markdown("### 📋 Batch Results")
+    display_batch_results()
+
+
+def render_accuracy_test_tab() -> None:
+    """Render the accuracy testing tab."""
     # Main layout
     col1, col2 = st.columns([3, 1])
 
@@ -973,6 +1125,332 @@ def display_result_card(result: Dict) -> None:
 
         # Separator between cards
         st.markdown("---")
+
+
+def run_single_domain_analysis(domain: str, headless: bool) -> None:
+    """Run analysis on a single domain and store results."""
+    # Clean domain input
+    domain = domain.replace("http://", "").replace("https://", "").replace("www.", "")
+    if "/" in domain:
+        domain = domain.split("/")[0]
+    
+    # Create progress indicators
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    activity_container = st.container()
+    
+    try:
+        status_text.text("🔍 Initializing detector...")
+        progress_bar.progress(10)
+        
+        # Initialize detector
+        detector = CloudProviderDetector(headless=headless)
+        
+        status_text.text(f"🌐 Analyzing {domain}...")
+        progress_bar.progress(30)
+        
+        # Run analysis
+        url = f"https://{domain}"
+        result = asyncio.run(detector.analyze_website(url))
+        
+        progress_bar.progress(80)
+        status_text.text("💾 Saving results...")
+        
+        # Prepare result for storage
+        storage_result = {
+            'domain': domain,
+            'url': url,
+            'predicted_label': result.get('predicted_label', 'Unknown'),
+            'all_detected_providers': result.get('all_detected_providers', []),
+            'confidence': result.get('confidence', 0),
+            'primary_reason': result.get('primary_reason', 'Unknown'),
+            'backend_data': result.get('details', {}).get('backend_data', {}),
+            'ip_analysis': result.get('ip_analysis', {}),
+            'evidence': result.get('evidence', []),
+            'analysis_type': 'single_domain'
+        }
+        
+        # Save to storage
+        add_result_to_storage(SINGLE_RESULTS_FILE, storage_result)
+        
+        progress_bar.progress(100)
+        status_text.text("✅ Analysis complete!")
+        
+        # Display result immediately
+        st.success(f"✅ Analysis complete for {domain}")
+        display_single_result_card(storage_result)
+        
+    except Exception as e:
+        st.error(f"❌ Error analyzing {domain}: {str(e)}")
+        progress_bar.progress(100)
+        status_text.text("❌ Analysis failed")
+
+
+def run_csv_batch_analysis(df: pd.DataFrame, headless: bool, max_concurrent: int) -> None:
+    """Run batch analysis on CSV data."""
+    if 'batch_processing' not in st.session_state:
+        st.session_state.batch_processing = False
+    
+    if st.session_state.batch_processing:
+        st.warning("⚠️ Batch processing already in progress")
+        return
+    
+    st.session_state.batch_processing = True
+    
+    # Create progress tracking
+    total_domains = len(df)
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    results_container = st.container()
+    
+    # Initialize detector
+    detector = CloudProviderDetector(headless=headless)
+    
+    processed = 0
+    batch_results = []
+    
+    try:
+        for index, row in df.iterrows():
+            domain = str(row['domain']).strip()
+            
+            # Clean domain
+            domain = domain.replace("http://", "").replace("https://", "").replace("www.", "")
+            if "/" in domain:
+                domain = domain.split("/")[0]
+            
+            if not domain:
+                continue
+            
+            status_text.text(f"🔍 Analyzing {domain} ({processed + 1}/{total_domains})")
+            
+            try:
+                # Run analysis
+                url = f"https://{domain}"
+                result = asyncio.run(detector.analyze_website(url))
+                
+                # Prepare result with original CSV data
+                storage_result = {
+                    'domain': domain,
+                    'url': url,
+                    'predicted_label': result.get('predicted_label', 'Unknown'),
+                    'all_detected_providers': result.get('all_detected_providers', []),
+                    'confidence': result.get('confidence', 0),
+                    'primary_reason': result.get('primary_reason', 'Unknown'),
+                    'backend_data': result.get('details', {}).get('backend_data', {}),
+                    'ip_analysis': result.get('ip_analysis', {}),
+                    'evidence': result.get('evidence', []),
+                    'analysis_type': 'batch',
+                    'original_data': row.to_dict()  # Preserve original CSV data
+                }
+                
+                # Save to storage
+                add_result_to_storage(BATCH_RESULTS_FILE, storage_result)
+                batch_results.append(storage_result)
+                
+                # Show progress
+                with results_container:
+                    st.success(f"✅ {domain} → {result.get('predicted_label', 'Unknown')}")
+                
+            except Exception as e:
+                error_result = {
+                    'domain': domain,
+                    'url': f"https://{domain}",
+                    'predicted_label': 'Error',
+                    'error': str(e),
+                    'analysis_type': 'batch',
+                    'original_data': row.to_dict()
+                }
+                add_result_to_storage(BATCH_RESULTS_FILE, error_result)
+                
+                with results_container:
+                    st.error(f"❌ {domain} → Error: {str(e)}")
+            
+            processed += 1
+            progress_bar.progress(processed / total_domains)
+        
+        status_text.text(f"✅ Batch analysis complete! Processed {processed} domains")
+        st.success(f"🎉 Batch analysis complete! Processed {processed} domains")
+        
+    except Exception as e:
+        st.error(f"❌ Batch processing error: {str(e)}")
+    finally:
+        st.session_state.batch_processing = False
+
+
+def display_single_domain_results() -> None:
+    """Display stored single domain results."""
+    results = load_results(SINGLE_RESULTS_FILE)
+    
+    if not results:
+        st.info("No single domain analyses yet. Analyze a domain above to see results here.")
+        return
+    
+    # Sort by timestamp (newest first)
+    results.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+    
+    # Show recent results
+    for result in results[:10]:  # Show last 10 results
+        display_single_result_card(result)
+    
+    if len(results) > 10:
+        st.info(f"Showing 10 most recent results. Total: {len(results)} analyses stored.")
+
+
+def display_batch_results() -> None:
+    """Display stored batch results."""
+    results = load_results(BATCH_RESULTS_FILE)
+    
+    if not results:
+        st.info("No batch analyses yet. Upload and process a CSV above to see results here.")
+        return
+    
+    # Group by timestamp/batch
+    batch_groups = {}
+    for result in results:
+        timestamp = result.get('timestamp', '')
+        date_key = timestamp.split('T')[0] if 'T' in timestamp else 'Unknown'
+        if date_key not in batch_groups:
+            batch_groups[date_key] = []
+        batch_groups[date_key].append(result)
+    
+    # Display by batch
+    for date_key in sorted(batch_groups.keys(), reverse=True):
+        batch_results = batch_groups[date_key]
+        
+        with st.expander(f"📊 Batch from {date_key} ({len(batch_results)} domains)", expanded=True):
+            # Create summary
+            providers = {}
+            errors = 0
+            for result in batch_results:
+                if result.get('predicted_label') == 'Error':
+                    errors += 1
+                else:
+                    provider = result.get('predicted_label', 'Unknown')
+                    providers[provider] = providers.get(provider, 0) + 1
+            
+            # Show summary
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("**Provider Distribution:**")
+                for provider, count in sorted(providers.items()):
+                    st.markdown(f"• {provider}: {count}")
+            with col2:
+                st.markdown("**Batch Stats:**")
+                st.markdown(f"• Total: {len(batch_results)}")
+                st.markdown(f"• Successful: {len(batch_results) - errors}")
+                st.markdown(f"• Errors: {errors}")
+            
+            # Download results as CSV
+            if st.button(f"📥 Download Results CSV", key=f"download_{date_key}"):
+                download_batch_results(batch_results, date_key)
+
+
+def display_single_result_card(result: Dict) -> None:
+    """Display a single result card."""
+    domain = result.get('domain', 'Unknown')
+    predicted = result.get('predicted_label', 'Unknown')
+    providers = result.get('all_detected_providers', [])
+    confidence = result.get('confidence', 0)
+    reason = result.get('primary_reason', 'Unknown')
+    timestamp = result.get('timestamp', '')
+    
+    # Format timestamp
+    if timestamp:
+        try:
+            dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+            time_str = dt.strftime('%Y-%m-%d %H:%M:%S')
+        except:
+            time_str = timestamp
+    else:
+        time_str = 'Unknown'
+    
+    with st.container():
+        # Header
+        if predicted == 'Error':
+            st.error(f"❌ **{domain}** → Error")
+            if 'error' in result:
+                st.markdown(f"**Error:** {result['error']}")
+        elif predicted == 'Insufficient Data':
+            st.info(f"🔍 **{domain}** → Insufficient Data")
+        else:
+            provider_display = " + ".join(providers) if len(providers) > 1 else predicted
+            st.success(f"✅ **{domain}** → {provider_display}")
+        
+        # Details
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown(f"**Confidence:** {confidence}%")
+            st.markdown(f"**Primary Reason:** {reason}")
+        with col2:
+            st.markdown(f"**Analyzed:** {time_str}")
+            if len(providers) > 1:
+                st.markdown(f"**All Providers:** {', '.join(providers)}")
+        
+        # Expandable details
+        if predicted != 'Error':
+            with st.expander("📊 Detailed Analysis"):
+                backend_data = result.get('backend_data', {})
+                ip_analysis = result.get('ip_analysis', {})
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown("**🏢 Subdomains:**")
+                    subdomains = backend_data.get('app_subdomains', [])
+                    if subdomains:
+                        for sub in subdomains[:5]:  # Show first 5
+                            st.markdown(f"• {sub}")
+                        if len(subdomains) > 5:
+                            st.markdown(f"... and {len(subdomains) - 5} more")
+                    else:
+                        st.markdown("*None found*")
+                
+                with col2:
+                    st.markdown("**☁️ Cloud Matches:**")
+                    matches = ip_analysis.get('cloud_ip_matches', [])
+                    if matches:
+                        for match in matches[:3]:  # Show first 3
+                            st.markdown(f"• {match.get('api_domain', 'Unknown')} → {match.get('provider', 'Unknown')}")
+                        if len(matches) > 3:
+                            st.markdown(f"... and {len(matches) - 3} more")
+                    else:
+                        st.markdown("*None found*")
+        
+        st.markdown("---")
+
+
+def download_batch_results(results: List[Dict], date_key: str) -> None:
+    """Create downloadable CSV from batch results."""
+    # Flatten results for CSV
+    csv_data = []
+    for result in results:
+        row = {
+            'domain': result.get('domain', ''),
+            'predicted_provider': result.get('predicted_label', ''),
+            'confidence': result.get('confidence', 0),
+            'primary_reason': result.get('primary_reason', ''),
+            'all_providers': ', '.join(result.get('all_detected_providers', [])),
+            'timestamp': result.get('timestamp', ''),
+        }
+        
+        # Add original CSV data if available
+        if 'original_data' in result:
+            for key, value in result['original_data'].items():
+                if key not in row:  # Don't overwrite our analysis columns
+                    row[key] = value
+        
+        csv_data.append(row)
+    
+    # Create DataFrame and download
+    df = pd.DataFrame(csv_data)
+    csv = df.to_csv(index=False)
+    
+    st.download_button(
+        label=f"📥 Download {date_key} Results",
+        data=csv,
+        file_name=f"cloud_provider_analysis_{date_key}.csv",
+        mime="text/csv",
+        key=f"download_csv_{date_key}"
+    )
 
 
 if __name__ == "__main__":
