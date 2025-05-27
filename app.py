@@ -299,16 +299,21 @@ def render_single_domain_tab() -> None:
         domain_input = st.text_input(
             "Domain to analyze",
             placeholder="example.com",
-            help="Enter a domain without http:// or https://"
+            help="Enter a domain without http:// or https://",
+            key="domain_input"
         )
     
     with col2:
         st.markdown("<br>", unsafe_allow_html=True)  # Add spacing
         headless_mode = st.checkbox("Headless browser", value=True, key="single_headless")
     
-    # Analysis button
-    if st.button("🚀 Analyze Domain", type="primary", use_container_width=True):
+    # Analysis button and Enter key handling
+    analyze_clicked = st.button("🚀 Analyze Domain", type="primary", use_container_width=True)
+    
+    # Check if Enter was pressed or button clicked
+    if analyze_clicked or (domain_input and domain_input != st.session_state.get("last_analyzed_domain", "")):
         if domain_input.strip():
+            st.session_state.last_analyzed_domain = domain_input.strip()
             run_single_domain_analysis(domain_input.strip(), headless_mode)
         else:
             st.error("Please enter a domain to analyze")
@@ -962,7 +967,7 @@ def display_result_card(result: Dict) -> None:
         # Show primary reason
         st.markdown(f"**💡 Primary Reason:** {result['primary_reason']}")
 
-        # Create expandable sections for details
+        # Create expandable sections for details - keep expanded
         with st.expander(
             "📊 Detailed Analysis",
             expanded=True,
@@ -971,8 +976,8 @@ def display_result_card(result: Dict) -> None:
             col1, col2 = st.columns([1, 1])
 
             with col1:
-                # Subdomains section
-                st.markdown("**🏢 Subdomains Explored:**")
+                # Subdomains section - only show actually found subdomains
+                st.markdown("**🏢 Subdomains Found:**")
                 if backend_data.get("app_subdomains"):
                     domain_filtered_subdomains = [
                         sub
@@ -989,32 +994,29 @@ def display_result_card(result: Dict) -> None:
                         for subdomain in domain_filtered_subdomains:
                             st.markdown(f"• 📍 {subdomain}")
                     else:
-                        st.markdown(f"*No subdomains discovered for {domain}*")
+                        st.markdown(f"*No subdomains found for {domain}*")
                 else:
-                    st.markdown("*No subdomains discovered*")
+                    st.markdown("*No subdomains found*")
 
                 st.markdown("---")
 
-                # XHR API calls section
-                st.markdown("**🔗 XHR API Calls:**")
-                if backend_data.get("xhr_api_calls"):
-                    domain_filtered_calls = [
-                        api
-                        for api in backend_data["xhr_api_calls"]
-                        if base_domain
-                        and (
-                            base_domain in api
-                            or api.endswith(f".{base_domain}")
-                            or api == base_domain
-                        )
-                    ]
-                    if domain_filtered_calls:
-                        for api in domain_filtered_calls:
+                # XHR API calls section - only show endpoints that actually resolved to IPs
+                st.markdown("**🔗 API Endpoints Found:**")
+                if ip_analysis.get("cloud_ip_matches"):
+                    # Get API endpoints that actually have IP matches (meaning they exist)
+                    found_api_endpoints = list(set([
+                        match.get("api_domain", "")
+                        for match in ip_analysis["cloud_ip_matches"]
+                        if base_domain in match.get("api_domain", "")
+                    ]))
+                    
+                    if found_api_endpoints:
+                        for api in found_api_endpoints:
                             st.markdown(f"• 📡 {api}")
                     else:
-                        st.markdown(f"*No XHR API calls found for {domain}*")
+                        st.markdown(f"*No API endpoints found for {domain}*")
                 else:
-                    st.markdown("*No XHR API calls found*")
+                    st.markdown("*No API endpoints found*")
 
             with col2:
                 # IP Analysis section
@@ -1407,27 +1409,39 @@ def display_single_result_card(result: Dict) -> None:
             if len(providers) > 1:
                 st.markdown(f"**All Providers:** {', '.join(providers)}")
         
-        # Expandable details
+        # Expandable details - keep expanded by default
         if predicted != 'Error':
-            with st.expander("📊 Detailed Analysis"):
+            with st.expander("📊 Detailed Analysis", expanded=True):
                 backend_data = result.get('backend_data', {})
                 ip_analysis = result.get('ip_analysis', {})
                 
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.markdown("**🏢 Subdomains Explored:**")
+                    st.markdown("**🏢 Subdomains Found:**")
                     subdomains = backend_data.get('app_subdomains', [])
                     if subdomains:
-                        for sub in subdomains:  # Show ALL subdomains
+                        for sub in subdomains:  # Show ALL found subdomains
                             st.markdown(f"• {sub}")
                     else:
                         st.markdown("*None found*")
                     
-                    st.markdown("**🔗 XHR API Calls:**")
-                    xhr_calls = backend_data.get('xhr_api_calls', [])
-                    if xhr_calls:
-                        for call in xhr_calls:  # Show ALL XHR calls
-                            st.markdown(f"• {call}")
+                    st.markdown("**🔗 API Endpoints Found:**")
+                    ip_analysis = result.get('ip_analysis', {})
+                    if ip_analysis.get('cloud_ip_matches'):
+                        # Get API endpoints that actually have IP matches (meaning they exist)
+                        domain = result.get('domain', '')
+                        base_domain = domain.replace('www.', '') if domain.startswith('www.') else domain
+                        found_api_endpoints = list(set([
+                            match.get("api_domain", "")
+                            for match in ip_analysis["cloud_ip_matches"]
+                            if base_domain in match.get("api_domain", "")
+                        ]))
+                        
+                        if found_api_endpoints:
+                            for api in found_api_endpoints:
+                                st.markdown(f"• {api}")
+                        else:
+                            st.markdown("*None found*")
                     else:
                         st.markdown("*None found*")
                 
