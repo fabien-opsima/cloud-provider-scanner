@@ -1156,14 +1156,25 @@ def run_single_domain_analysis(domain: str, headless: bool) -> None:
         progress_bar.progress(80)
         status_text.text("💾 Saving results...")
         
-        # Prepare result for storage
+        # Prepare result for storage - fix field mapping
+        predicted_label = result.get('primary_cloud_provider', 'Unknown')
+        confidence = result.get('confidence_score', 0)
+        primary_reason = result.get('primary_reason', 'Unknown')
+        
+        # Get all detected providers from result
+        all_detected_providers = []
+        if result.get("details", {}).get("provider_scores"):
+            all_detected_providers = [
+                p for p, score in result["details"]["provider_scores"].items() if score > 0
+            ]
+        
         storage_result = {
             'domain': domain,
             'url': url,
-            'predicted_label': result.get('predicted_label', 'Unknown'),
-            'all_detected_providers': result.get('all_detected_providers', []),
-            'confidence': result.get('confidence', 0),
-            'primary_reason': result.get('primary_reason', 'Unknown'),
+            'predicted_label': predicted_label,
+            'all_detected_providers': all_detected_providers,
+            'confidence': confidence,
+            'primary_reason': primary_reason,
             'backend_data': result.get('details', {}).get('backend_data', {}),
             'ip_analysis': result.get('ip_analysis', {}),
             'evidence': result.get('evidence', []),
@@ -1174,10 +1185,9 @@ def run_single_domain_analysis(domain: str, headless: bool) -> None:
         add_result_to_storage(SINGLE_RESULTS_FILE, storage_result)
         
         progress_bar.progress(100)
-        status_text.text("✅ Analysis complete!")
+        status_text.text("✅ Complete!")
         
         # Display result immediately
-        st.success(f"✅ Analysis complete for {domain}")
         display_single_result_card(storage_result)
         
     except Exception as e:
@@ -1228,14 +1238,25 @@ def run_csv_batch_analysis(df: pd.DataFrame, headless: bool, max_concurrent: int
                 url = f"https://{domain}"
                 result = asyncio.run(detector.analyze_website(url))
                 
-                # Prepare result with original CSV data
+                # Prepare result with original CSV data - fix field mapping
+                predicted_label = result.get('primary_cloud_provider', 'Unknown')
+                confidence = result.get('confidence_score', 0)
+                primary_reason = result.get('primary_reason', 'Unknown')
+                
+                # Get all detected providers from result
+                all_detected_providers = []
+                if result.get("details", {}).get("provider_scores"):
+                    all_detected_providers = [
+                        p for p, score in result["details"]["provider_scores"].items() if score > 0
+                    ]
+                
                 storage_result = {
                     'domain': domain,
                     'url': url,
-                    'predicted_label': result.get('predicted_label', 'Unknown'),
-                    'all_detected_providers': result.get('all_detected_providers', []),
-                    'confidence': result.get('confidence', 0),
-                    'primary_reason': result.get('primary_reason', 'Unknown'),
+                    'predicted_label': predicted_label,
+                    'all_detected_providers': all_detected_providers,
+                    'confidence': confidence,
+                    'primary_reason': primary_reason,
                     'backend_data': result.get('details', {}).get('backend_data', {}),
                     'ip_analysis': result.get('ip_analysis', {}),
                     'evidence': result.get('evidence', []),
@@ -1249,7 +1270,7 @@ def run_csv_batch_analysis(df: pd.DataFrame, headless: bool, max_concurrent: int
                 
                 # Show progress
                 with results_container:
-                    st.success(f"✅ {domain} → {result.get('predicted_label', 'Unknown')}")
+                    st.success(f"✅ {domain} → {predicted_label}")
                 
             except Exception as e:
                 error_result = {
@@ -1394,24 +1415,48 @@ def display_single_result_card(result: Dict) -> None:
                 
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.markdown("**🏢 Subdomains:**")
+                    st.markdown("**🏢 Subdomains Explored:**")
                     subdomains = backend_data.get('app_subdomains', [])
                     if subdomains:
-                        for sub in subdomains[:5]:  # Show first 5
+                        for sub in subdomains:  # Show ALL subdomains
                             st.markdown(f"• {sub}")
-                        if len(subdomains) > 5:
-                            st.markdown(f"... and {len(subdomains) - 5} more")
+                    else:
+                        st.markdown("*None found*")
+                    
+                    st.markdown("**🔗 XHR API Calls:**")
+                    xhr_calls = backend_data.get('xhr_api_calls', [])
+                    if xhr_calls:
+                        for call in xhr_calls:  # Show ALL XHR calls
+                            st.markdown(f"• {call}")
                     else:
                         st.markdown("*None found*")
                 
                 with col2:
-                    st.markdown("**☁️ Cloud Matches:**")
+                    st.markdown("**☁️ Cloud IP Matches:**")
                     matches = ip_analysis.get('cloud_ip_matches', [])
                     if matches:
-                        for match in matches[:3]:  # Show first 3
-                            st.markdown(f"• {match.get('api_domain', 'Unknown')} → {match.get('provider', 'Unknown')}")
-                        if len(matches) > 3:
-                            st.markdown(f"... and {len(matches) - 3} more")
+                        for match in matches:  # Show ALL matches
+                            api_domain = match.get('api_domain', 'Unknown')
+                            ip = match.get('ip', 'Unknown')
+                            provider = match.get('provider', 'Unknown')
+                            ip_range = match.get('ip_range', 'Unknown')
+                            st.markdown(f"• **{api_domain}**")
+                            st.markdown(f"  IP: {ip} → {provider}")
+                            st.markdown(f"  Range: {ip_range}")
+                    else:
+                        st.markdown("*None found*")
+                    
+                    st.markdown("**☁️ Direct Cloud Calls:**")
+                    cloud_calls = backend_data.get('cloud_provider_domains', [])
+                    if cloud_calls:
+                        for call in cloud_calls:  # Show ALL cloud calls
+                            if isinstance(call, tuple) and len(call) >= 2:
+                                domain_call, provider_name = call[0], call[1]
+                                service_type = call[2] if len(call) > 2 else ""
+                                service_text = f" ({service_type})" if service_type else ""
+                                st.markdown(f"• {domain_call} → {provider_name}{service_text}")
+                            else:
+                                st.markdown(f"• {call}")
                     else:
                         st.markdown("*None found*")
         
